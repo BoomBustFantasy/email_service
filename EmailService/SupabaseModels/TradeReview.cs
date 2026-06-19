@@ -1,14 +1,15 @@
 using System;
 using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
 using EmailService.SupabaseModels.Enums;
+using Supabase.Postgrest.Attributes;
+using Supabase.Postgrest.Models;
 
 namespace EmailService.SupabaseModels
 {
-    [Table("Trades", Schema = "public")]
-    public class TradeReview
+    [Table("Trades")]
+    public class TradeReview : BaseModel
     {
-        [Key]
+        [PrimaryKey("id")]
         [Column("id")]
         public long Id { get; set; }
 
@@ -33,9 +34,6 @@ namespace EmailService.SupabaseModels
         [Column("user_id")]
         public Guid UserId { get; set; }
 
-        [ForeignKey("UserId")]
-        public User? User { get; set; }
-
         [Column("reviewer_id")]
         public Guid? ReviewerId { get; set; }
 
@@ -47,5 +45,8 @@ namespace EmailService.SupabaseModels
 
         [Column("email_sent")]
         public bool EmailSent { get; set; }
+
+        [Column("reviewer_notified")]
+        public bool ReviewerNotified { get; set; }
     }
 }
