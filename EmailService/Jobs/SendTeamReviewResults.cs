@@ -14,12 +14,14 @@ namespace EmailService.Jobs
     {
         private readonly ISupabaseService _supabaseService;
         private readonly IEmailService _emailService;
+        private readonly ReviewEmailFactory _emailFactory;
         private readonly ILogger<SendTeamReviewResults> _logger;
 
-        public SendTeamReviewResults(ISupabaseService supabaseService, IEmailService emailService, ILogger<SendTeamReviewResults> logger)
+        public SendTeamReviewResults(ISupabaseService supabaseService, IEmailService emailService, ReviewEmailFactory emailFactory, ILogger<SendTeamReviewResults> logger)
         {
             _supabaseService = supabaseService;
             _emailService = emailService;
+            _emailFactory = emailFactory;
             _logger = logger;
         }
 
@@ -46,9 +48,8 @@ namespace EmailService.Jobs
                         continue;
                     }
 
-                    var subject = $"Your Team Review is Ready!";
-                    var body = $"Hello,\n\nYour team review is ready. You can view the YouTube link here: {review.YoutubeLink}\n\nThank you!";
-                    var sent = await _emailService.SendEmailAsync(review.Email, subject, body, "Boom Bust Team Review");
+                    var message = _emailFactory.BuildTeamReviewReady(review.YoutubeLink!);
+                    var sent = await _emailService.SendEmailAsync(review.Email, message.Subject, message.Body, "Boom Bust Team Review");
 
                     if (sent)
                     {

@@ -12,12 +12,14 @@ namespace EmailService.Jobs
     {
         private readonly ISupabaseService _supabaseService;
         private readonly IEmailService _emailService;
+        private readonly ReviewEmailFactory _emailFactory;
         private readonly ILogger<NotifyReviewerOfTradeJob> _logger;
 
-        public NotifyReviewerOfTradeJob(ISupabaseService supabaseService, IEmailService emailService, ILogger<NotifyReviewerOfTradeJob> logger)
+        public NotifyReviewerOfTradeJob(ISupabaseService supabaseService, IEmailService emailService, ReviewEmailFactory emailFactory, ILogger<NotifyReviewerOfTradeJob> logger)
         {
             _supabaseService = supabaseService;
             _emailService = emailService;
+            _emailFactory = emailFactory;
             _logger = logger;
         }
 
@@ -44,10 +46,8 @@ namespace EmailService.Jobs
                         continue;
                     }
 
-                    var subject = "You have a trade to review!";
-                    var tradeLink = $"https://boombustfantasy.com/trade/{trade.Id}";
-                    var body = $"Hello,\n\nYou have been assigned to review trade #{trade.Id}. You can view the trade directly here: {tradeLink}\n\nThank you!";
-                    var sent = await _emailService.SendEmailAsync(trade.Email, subject, body, "Boom Bust Reviewer Notification");
+                    var message = _emailFactory.BuildReviewerNotification(trade.Id);
+                    var sent = await _emailService.SendEmailAsync(trade.Email, message.Subject, message.Body, "Boom Bust Reviewer Notification");
 
                     if (sent)
                     {

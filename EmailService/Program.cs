@@ -25,6 +25,7 @@ IHost host = Host.CreateDefaultBuilder(args)
     {
         services.Configure<GmailConfig>(hostContext.Configuration.GetSection("Gmail"));
         services.Configure<SupabaseConfig>(hostContext.Configuration.GetSection("Supabase"));
+        services.Configure<AppConfig>(hostContext.Configuration.GetSection("App"));
 
         services.AddSingleton(sp =>
         {
@@ -41,6 +42,7 @@ IHost host = Host.CreateDefaultBuilder(args)
 
         services.AddScoped<EmailService.Services.ISupabaseService, EmailService.Services.SupabaseService>();
         services.AddScoped<EmailService.Services.IEmailService, EmailService.Services.SmtpEmailService>();
+        services.AddScoped<EmailService.Services.ReviewEmailFactory>();
 
         services.AddQuartz(q =>
         {
