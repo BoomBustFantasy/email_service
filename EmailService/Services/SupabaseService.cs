@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -58,11 +59,10 @@ namespace EmailService.Services
             var json = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {
-                throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            var trades = JsonSerializer.Deserialize<List<TradeEmailInfo>>(json, _jsonOptions) ?? new List<TradeEmailInfo>();
-            return trades;
+            return JsonSerializer.Deserialize<List<TradeEmailInfo>>(json, _jsonOptions) ?? new List<TradeEmailInfo>();
         }
 
         public async Task MarkEmailSentAsync(long tradeId)
@@ -80,7 +80,7 @@ namespace EmailService.Services
                 var json = await response.Content.ReadAsStringAsync();
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                    throw new Exception($"Supabase error: {response.StatusCode} - {json}");
                 }
             });
         }
@@ -98,11 +98,10 @@ namespace EmailService.Services
             var json = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {
-                throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            var reviews = JsonSerializer.Deserialize<List<EmailService.SupabaseModels.TeamReview>>(json, _jsonOptions) ?? new List<EmailService.SupabaseModels.TeamReview>();
-            return reviews;
+            return JsonSerializer.Deserialize<List<EmailService.SupabaseModels.TeamReview>>(json, _jsonOptions) ?? new List<EmailService.SupabaseModels.TeamReview>();
         }
 
         public async Task<List<EmailService.DTOs.TeamReviewEmailInfo>> GetPendingTeamReviewEmailsWithYoutubeAsync()
@@ -118,11 +117,10 @@ namespace EmailService.Services
             var json = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {
-                throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            var reviews = JsonSerializer.Deserialize<List<EmailService.DTOs.TeamReviewEmailInfo>>(json, _jsonOptions) ?? new List<EmailService.DTOs.TeamReviewEmailInfo>();
-            return reviews;
+            return JsonSerializer.Deserialize<List<EmailService.DTOs.TeamReviewEmailInfo>>(json, _jsonOptions) ?? new List<EmailService.DTOs.TeamReviewEmailInfo>();
         }
 
         public async Task<EmailService.SupabaseModels.User?> GetUserByIdAsync(System.Guid userId)
@@ -137,7 +135,7 @@ namespace EmailService.Services
             var json = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {
-                throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
             var users = JsonSerializer.Deserialize<List<EmailService.SupabaseModels.User>>(json, _jsonOptions);
@@ -159,7 +157,7 @@ namespace EmailService.Services
                 var json = await response.Content.ReadAsStringAsync();
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                    throw new Exception($"Supabase error: {response.StatusCode} - {json}");
                 }
             });
         }
@@ -177,7 +175,7 @@ namespace EmailService.Services
             var json = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {
-                throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
             var trades = JsonSerializer.Deserialize<List<TradeReviewerNotificationDto>>(json, _jsonOptions) ?? new List<TradeReviewerNotificationDto>();
@@ -204,7 +202,7 @@ namespace EmailService.Services
                 var json = await response.Content.ReadAsStringAsync();
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                    throw new Exception($"Supabase error: {response.StatusCode} - {json}");
                 }
             });
         }
@@ -213,9 +211,15 @@ namespace EmailService.Services
         {
             for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                try { await action(); return; }
+                try
+                {
+                    await action();
+                    return;
+                }
                 catch when (attempt < maxRetries)
-                { await Task.Delay(1000 * attempt); }
+                {
+                    await Task.Delay(1000 * attempt);
+                }
             }
         }
 

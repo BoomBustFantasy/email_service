@@ -1,4 +1,4 @@
-using System.Net;
+using System;
 using System.Net.Mail;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -34,7 +34,6 @@ namespace EmailService.Services
                         smtp.EnableSsl = true;
                         smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
                         smtp.UseDefaultCredentials = false;
-                        // No credentials for IP-based relay
                         await smtp.SendMailAsync(mail);
                     }
                 }
