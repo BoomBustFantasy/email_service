@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="BoomBust.Logging" Version="1.0.1" />
-    <PackageReference Include="MailKit" Version="4.13.0" />
+    <PackageReference Include="MailKit" Version="4.17.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.6" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.6" />
     <PackageReference Include="Quartz" Version="3.14.0" />
