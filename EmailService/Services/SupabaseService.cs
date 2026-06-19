@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using EmailService.Configs;
 using Microsoft.Extensions.Options;
@@ -31,6 +32,13 @@ namespace EmailService.Services
         private readonly SupabaseConfig _config;
         private readonly HttpClient _httpClient;
 
+        private static readonly JsonSerializerOptions _jsonOptions = new()
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) }
+        };
+
         public SupabaseService(IOptions<SupabaseConfig> config)
         {
             _config = config.Value;
@@ -53,9 +61,7 @@ namespace EmailService.Services
                 throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            options.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
-            var trades = JsonSerializer.Deserialize<List<TradeEmailInfo>>(json, options) ?? new List<TradeEmailInfo>();
+            var trades = JsonSerializer.Deserialize<List<TradeEmailInfo>>(json, _jsonOptions) ?? new List<TradeEmailInfo>();
             return trades;
         }
 
@@ -92,9 +98,7 @@ namespace EmailService.Services
                 throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            options.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
-            var reviews = JsonSerializer.Deserialize<List<EmailService.SupabaseModels.TeamReview>>(json, options) ?? new List<EmailService.SupabaseModels.TeamReview>();
+            var reviews = JsonSerializer.Deserialize<List<EmailService.SupabaseModels.TeamReview>>(json, _jsonOptions) ?? new List<EmailService.SupabaseModels.TeamReview>();
             return reviews;
         }
 
@@ -114,9 +118,7 @@ namespace EmailService.Services
                 throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            options.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
-            var reviews = JsonSerializer.Deserialize<List<EmailService.DTOs.TeamReviewEmailInfo>>(json, options) ?? new List<EmailService.DTOs.TeamReviewEmailInfo>();
+            var reviews = JsonSerializer.Deserialize<List<EmailService.DTOs.TeamReviewEmailInfo>>(json, _jsonOptions) ?? new List<EmailService.DTOs.TeamReviewEmailInfo>();
             return reviews;
         }
 
@@ -135,9 +137,7 @@ namespace EmailService.Services
                 throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            options.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
-            var users = JsonSerializer.Deserialize<List<EmailService.SupabaseModels.User>>(json, options);
+            var users = JsonSerializer.Deserialize<List<EmailService.SupabaseModels.User>>(json, _jsonOptions);
             return users != null && users.Count > 0 ? users[0] : null;
         }
 
@@ -174,9 +174,7 @@ namespace EmailService.Services
                 throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            options.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
-            var trades = JsonSerializer.Deserialize<List<TradeReviewerNotificationDto>>(json, options) ?? new List<TradeReviewerNotificationDto>();
+            var trades = JsonSerializer.Deserialize<List<TradeReviewerNotificationDto>>(json, _jsonOptions) ?? new List<TradeReviewerNotificationDto>();
             var result = new List<(long, string)>();
             foreach (var t in trades)
             {

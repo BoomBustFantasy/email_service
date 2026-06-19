@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using EmailService.SupabaseModels.Enums;
 
 namespace EmailService.SupabaseModels
 {
@@ -17,7 +18,7 @@ namespace EmailService.SupabaseModels
 
         [Required]
         [Column("status")]
-        public int Status { get; set; }
+        public AdviceStatus Status { get; set; }
 
         [Column("winning_team")]
         public int? WinningTeam { get; set; }
