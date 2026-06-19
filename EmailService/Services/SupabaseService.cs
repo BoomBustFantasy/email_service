@@ -67,19 +67,22 @@ namespace EmailService.Services
 
         public async Task MarkEmailSentAsync(long tradeId)
         {
-            var url = $"{_config.Url}/rest/v1/Trades?id=eq.{tradeId}";
-            var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-            request.Headers.Add("apikey", _config.ServiceRoleKey);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Content = new StringContent("[{\"email_sent\": true}]", System.Text.Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
+            await RetryAsync(async () =>
             {
-                throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
-            }
+                var url = $"{_config.Url}/rest/v1/Trades?id=eq.{tradeId}";
+                var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
+                request.Headers.Add("apikey", _config.ServiceRoleKey);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Content = new StringContent("[{\"email_sent\": true}]", System.Text.Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.SendAsync(request);
+                var json = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                }
+            });
         }
 
         public async Task<List<EmailService.SupabaseModels.TeamReview>> GetPendingTeamReviewsWithYoutubeAsync()
@@ -143,19 +146,22 @@ namespace EmailService.Services
 
         public async Task MarkTeamReviewEmailedAsync(long teamReviewId)
         {
-            var url = $"{_config.Url}/rest/v1/TeamReviews?id=eq.{teamReviewId}";
-            var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-            request.Headers.Add("apikey", _config.ServiceRoleKey);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Content = new StringContent("[{\"email_sent\": true}]", System.Text.Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
+            await RetryAsync(async () =>
             {
-                throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
-            }
+                var url = $"{_config.Url}/rest/v1/TeamReviews?id=eq.{teamReviewId}";
+                var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
+                request.Headers.Add("apikey", _config.ServiceRoleKey);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Content = new StringContent("[{\"email_sent\": true}]", System.Text.Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.SendAsync(request);
+                var json = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                }
+            });
         }
 
         public async Task<List<(long Id, string Email)>> GetTradesForReviewerNotificationAsync()
@@ -185,18 +191,31 @@ namespace EmailService.Services
 
         public async Task MarkReviewerNotifiedAsync(long tradeId)
         {
-            var url = $"{_config.Url}/rest/v1/Trades?id=eq.{tradeId}";
-            var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-            request.Headers.Add("apikey", _config.ServiceRoleKey);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Content = new StringContent("[{\"reviewer_notified\": true}]", System.Text.Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
+            await RetryAsync(async () =>
             {
-                throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                var url = $"{_config.Url}/rest/v1/Trades?id=eq.{tradeId}";
+                var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
+                request.Headers.Add("apikey", _config.ServiceRoleKey);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Content = new StringContent("[{\"reviewer_notified\": true}]", System.Text.Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.SendAsync(request);
+                var json = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new System.Exception($"Supabase error: {response.StatusCode} - {json}");
+                }
+            });
+        }
+
+        private static async Task RetryAsync(Func<Task> action, int maxRetries = 3)
+        {
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                try { await action(); return; }
+                catch when (attempt < maxRetries)
+                { await Task.Delay(1000 * attempt); }
             }
         }
 
