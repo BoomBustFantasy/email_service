@@ -2,6 +2,7 @@ using Quartz;
 using System;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MailKit.Net.Smtp;
 using MimeKit;
@@ -18,13 +19,16 @@ namespace EmailService.Jobs
     {
         private readonly GmailConfig _gmailConfig;
         private readonly ISupabaseService _supabaseService;
+        private readonly ILogger<SendTradeReviewResults> _logger;
 
         public SendTradeReviewResults(
             IOptions<GmailConfig> gmailConfig,
-            ISupabaseService supabaseService)
+            ISupabaseService supabaseService,
+            ILogger<SendTradeReviewResults> logger)
         {
             _gmailConfig = gmailConfig.Value;
             _supabaseService = supabaseService;
+            _logger = logger;
         }
 
         public async Task Execute(IJobExecutionContext context)
@@ -51,26 +55,20 @@ namespace EmailService.Jobs
                             smtp.EnableSsl = true;
                             smtp.DeliveryMethod = SmtpDeliveryMethod.Network;
                             smtp.UseDefaultCredentials = false;
-                            Console.WriteLine($"Attempting to send email from {_gmailConfig.Username} to {trade.UserEmail} using IP-based authentication...");
+                            _logger.LogInformation("Attempting to send email from {Username} to {Email} using IP-based authentication", _gmailConfig.Username, trade.UserEmail);
                             await smtp.SendMailAsync(mail);
-                            Console.WriteLine("Email sent successfully via Google Workspace SMTP Relay!");
+                            _logger.LogInformation("Email sent successfully via Google Workspace SMTP Relay for trade {TradeId} to {Email}", trade.TradeId, trade.UserEmail);
                             emailSent = true;
                         }
                     }
                 }
                 catch (SmtpException ex)
                 {
-                    Console.WriteLine($"SMTP Error: {ex.StatusCode} - {ex.Message}");
-                    if (ex.InnerException != null)
-                    {
-                        Console.WriteLine($"Inner Exception: {ex.InnerException.Message}");
-                    }
-                    Console.WriteLine("Troubleshooting Tip: Double-check the public IP address configured in your Google Workspace SMTP Relay settings.");
-                    Console.WriteLine("Also, ensure your server's firewall allows outbound connections on port 587.");
+                    _logger.LogError(ex, "SMTP error {StatusCode} sending trade completion email to {Email} for trade {TradeId}. Verify the sender IP is authorised in Google Workspace SMTP Relay and that port 587 is open outbound", ex.StatusCode, trade.UserEmail, trade.TradeId);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"An unexpected error occurred: {ex.Message}");
+                    _logger.LogError(ex, "Unexpected error sending trade completion email to {Email} for trade {TradeId}", trade.UserEmail, trade.TradeId);
                 }
 
                 if (emailSent)
@@ -91,7 +89,7 @@ namespace EmailService.Jobs
                             attempt++;
                             if (attempt >= maxRetries)
                             {
-                                Console.WriteLine($"Failed to mark email as sent for trade {trade.TradeId} after {maxRetries} attempts: {ex.Message}");
+                                _logger.LogError(ex, "Failed to mark email as sent for trade {TradeId} after {MaxRetries} attempts", trade.TradeId, maxRetries);
                             }
                             else
                             {
@@ -101,7 +99,7 @@ namespace EmailService.Jobs
                     }
                 }
 
-                Console.WriteLine($"[{DateTime.Now}] Sent trade completion email to {trade.UserEmail} for trade {trade.TradeId}.");
+                _logger.LogInformation("Processed trade completion email for trade {TradeId} to {Email}", trade.TradeId, trade.UserEmail);
             }
         }
     }

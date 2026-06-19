@@ -1,8 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 using Quartz;
+using BoomBust.Logging;
 using EmailService;
 using EmailService.Configs;
 
@@ -13,10 +13,11 @@ IHost host = Host.CreateDefaultBuilder(args)
         config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
         config.AddEnvironmentVariables();
     })
-    .ConfigureLogging(logging =>
+    .UseBoomBustLogging(options =>
     {
-        logging.ClearProviders();
-        logging.AddConsole();
+        options.ApplicationName = "EmailService";
+        options.LogFilePath = "logs/email-service-.txt";
+        options.OverrideToWarning = new[] { "Microsoft", "System", "Quartz" };
     })
     .ConfigureServices((hostContext, services) =>
     {
