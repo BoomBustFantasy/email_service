@@ -21,6 +21,9 @@ Thumbs.db
 # NuGet Packages folder can be ignored if not using package restore
 #packages/
 
+# NuGet auth config (contains credentials — copy nuget.config.template and fill in your PAT)
+nuget.config
+
 # Logs
 *.log
 
