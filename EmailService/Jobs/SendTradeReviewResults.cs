@@ -10,15 +10,18 @@ namespace EmailService.Jobs
     {
         private readonly ISupabaseService _supabaseService;
         private readonly IEmailService _emailService;
+        private readonly ReviewEmailFactory _emailFactory;
         private readonly ILogger<SendTradeReviewResults> _logger;
 
         public SendTradeReviewResults(
             ISupabaseService supabaseService,
             IEmailService emailService,
+            ReviewEmailFactory emailFactory,
             ILogger<SendTradeReviewResults> logger)
         {
             _supabaseService = supabaseService;
             _emailService = emailService;
+            _emailFactory = emailFactory;
             _logger = logger;
         }
 
@@ -30,10 +33,11 @@ namespace EmailService.Jobs
             {
                 if (string.IsNullOrWhiteSpace(trade.UserEmail)) continue;
 
+                var message = _emailFactory.BuildTradeReviewCompleted(trade.TradeId);
                 var emailSent = await _emailService.SendEmailAsync(
                     trade.UserEmail,
-                    "Your Trade Review Has Been Completed",
-                    $"Hello, a trade of yours has been reviewed. \nYou can view the trade here: https://boombustfantasy.com/trades/{trade.TradeId} \nThank you so much for using Boom Bust!",
+                    message.Subject,
+                    message.Body,
                     "Boom Bust Trade Review");
 
                 if (emailSent)
