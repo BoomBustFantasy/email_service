@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Quartz;
+using Supabase;
 using BoomBust.Logging;
 using EmailService;
 using EmailService.Configs;
@@ -23,6 +25,19 @@ IHost host = Host.CreateDefaultBuilder(args)
     {
         services.Configure<GmailConfig>(hostContext.Configuration.GetSection("Gmail"));
         services.Configure<SupabaseConfig>(hostContext.Configuration.GetSection("Supabase"));
+
+        services.AddSingleton(sp =>
+        {
+            var config = sp.GetRequiredService<IOptions<SupabaseConfig>>().Value;
+            if (string.IsNullOrEmpty(config.Url) || string.IsNullOrEmpty(config.ServiceRoleKey))
+                throw new InvalidOperationException("Supabase configuration is missing");
+
+            return new Client(config.Url, config.ServiceRoleKey, new SupabaseOptions
+            {
+                AutoConnectRealtime = false,
+                AutoRefreshToken = false
+            });
+        });
 
         services.AddScoped<EmailService.Services.ISupabaseService, EmailService.Services.SupabaseService>();
         services.AddScoped<EmailService.Services.IEmailService, EmailService.Services.SmtpEmailService>();
@@ -54,5 +69,8 @@ IHost host = Host.CreateDefaultBuilder(args)
         services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
     })
     .Build();
+
+var supabaseClient = host.Services.GetRequiredService<Client>();
+await supabaseClient.InitializeAsync();
 
 await host.RunAsync();

@@ -1,232 +1,140 @@
 using System;
 using System.Collections.Generic;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Linq;
 using System.Threading.Tasks;
 using EmailService.Configs;
+using EmailService.DTOs;
+using EmailService.SupabaseModels;
 using Microsoft.Extensions.Options;
+using Supabase;
+using Supabase.Gotrue.Interfaces;
+using static Supabase.Postgrest.Constants;
 
 namespace EmailService.Services
 {
-    public class TradeEmailInfo
-    {
-        public long TradeId { get; set; }
-        public string UserEmail { get; set; } = string.Empty;
-    }
-
-    public interface ISupabaseService
-    {
-        Task<List<TradeEmailInfo>> GetCompletedTradeReviewsWithUsersAsync();
-        Task MarkEmailSentAsync(long tradeId);
-        Task<List<EmailService.SupabaseModels.TeamReview>> GetPendingTeamReviewsWithYoutubeAsync();
-        Task<List<EmailService.DTOs.TeamReviewEmailInfo>> GetPendingTeamReviewEmailsWithYoutubeAsync();
-        Task<EmailService.SupabaseModels.User?> GetUserByIdAsync(System.Guid userId);
-        Task MarkTeamReviewEmailedAsync(long teamReviewId);
-        Task<List<(long Id, string Email)>> GetTradesForReviewerNotificationAsync();
-        Task MarkReviewerNotifiedAsync(long tradeId);
-    }
-
     public class SupabaseService : ISupabaseService
     {
-        private readonly SupabaseConfig _config;
-        private readonly HttpClient _httpClient;
+        private readonly Client _supabase;
+        private readonly IGotrueAdminClient<Supabase.Gotrue.User> _adminAuth;
 
-        private static readonly JsonSerializerOptions _jsonOptions = new()
+        public SupabaseService(Client supabase, IOptions<SupabaseConfig> config)
         {
-            PropertyNameCaseInsensitive = true,
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) }
-        };
+            _supabase = supabase;
 
-        public SupabaseService(IOptions<SupabaseConfig> config)
-        {
-            _config = config.Value;
-            _httpClient = new HttpClient();
+            if (string.IsNullOrEmpty(config.Value.ServiceRoleKey))
+            {
+                throw new InvalidOperationException("Supabase service role key is missing");
+            }
+
+            _adminAuth = _supabase.AdminAuth(config.Value.ServiceRoleKey);
         }
 
         public async Task<List<TradeEmailInfo>> GetCompletedTradeReviewsWithUsersAsync()
         {
-            var url = $"{_config.Url}/rest/v1/rpc/get_trades_for_email";
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-            request.Headers.Add("apikey", _config.ServiceRoleKey);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+            var trades = await _supabase
+                .From<TradeReview>()
+                .Filter("status", Operator.Equals, "complete")
+                .Where(trade => trade.EmailSent == false)
+                .Select("id,user_id")
+                .Get();
 
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
+            var result = new List<TradeEmailInfo>();
+
+            foreach (var trade in trades.Models)
             {
-                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
+                var user = await _adminAuth.GetUserById(trade.UserId.ToString());
+
+                if (!string.IsNullOrWhiteSpace(user?.Email))
+                {
+                    result.Add(new TradeEmailInfo
+                    {
+                        TradeId = trade.Id,
+                        UserEmail = user.Email
+                    });
+                }
             }
 
-            return JsonSerializer.Deserialize<List<TradeEmailInfo>>(json, _jsonOptions) ?? new List<TradeEmailInfo>();
+            return result;
         }
 
         public async Task MarkEmailSentAsync(long tradeId)
         {
-            await RetryAsync(async () =>
-            {
-                var url = $"{_config.Url}/rest/v1/Trades?id=eq.{tradeId}";
-                var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-                request.Headers.Add("apikey", _config.ServiceRoleKey);
-                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                request.Content = new StringContent("[{\"email_sent\": true}]", System.Text.Encoding.UTF8, "application/json");
+            await _supabase
+                .From<TradeReview>()
+                .Where(trade => trade.Id == tradeId)
+                .Set(trade => trade.EmailSent, true)
+                .Update();
+        }
 
-                var response = await _httpClient.SendAsync(request);
-                var json = await response.Content.ReadAsStringAsync();
-                if (!response.IsSuccessStatusCode)
+        public async Task<List<TeamReviewEmailInfo>> GetPendingTeamReviewEmailsWithYoutubeAsync()
+        {
+            var reviews = await _supabase
+                .From<TeamReview>()
+                .Where(review => review.EmailSent == false)
+                .Where(review => review.YoutubeLink != null)
+                .Select("id,user_id,youtube_link")
+                .Get();
+
+            var result = new List<TeamReviewEmailInfo>();
+
+            foreach (var review in reviews.Models)
+            {
+                var user = await _adminAuth.GetUserById(review.UserId.ToString());
+
+                if (!string.IsNullOrWhiteSpace(user?.Email))
                 {
-                    throw new Exception($"Supabase error: {response.StatusCode} - {json}");
+                    result.Add(new TeamReviewEmailInfo
+                    {
+                        Id = review.Id,
+                        Email = user.Email,
+                        YoutubeLink = review.YoutubeLink
+                    });
                 }
-            });
-        }
-
-        public async Task<List<EmailService.SupabaseModels.TeamReview>> GetPendingTeamReviewsWithYoutubeAsync()
-        {
-            var url = $"{_config.Url}/rest/v1/rpc/get_team_reviews_with_youtube";
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-            request.Headers.Add("apikey", _config.ServiceRoleKey);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
             }
 
-            return JsonSerializer.Deserialize<List<EmailService.SupabaseModels.TeamReview>>(json, _jsonOptions) ?? new List<EmailService.SupabaseModels.TeamReview>();
-        }
-
-        public async Task<List<EmailService.DTOs.TeamReviewEmailInfo>> GetPendingTeamReviewEmailsWithYoutubeAsync()
-        {
-            var url = $"{_config.Url}/rest/v1/rpc/get_team_review_emails_with_youtube";
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-            request.Headers.Add("apikey", _config.ServiceRoleKey);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
-            }
-
-            return JsonSerializer.Deserialize<List<EmailService.DTOs.TeamReviewEmailInfo>>(json, _jsonOptions) ?? new List<EmailService.DTOs.TeamReviewEmailInfo>();
-        }
-
-        public async Task<EmailService.SupabaseModels.User?> GetUserByIdAsync(System.Guid userId)
-        {
-            var url = $"{_config.Url}/rest/v1/auth.users?id=eq.{userId}";
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-            request.Headers.Add("apikey", _config.ServiceRoleKey);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
-            }
-
-            var users = JsonSerializer.Deserialize<List<EmailService.SupabaseModels.User>>(json, _jsonOptions);
-            return users != null && users.Count > 0 ? users[0] : null;
+            return result;
         }
 
         public async Task MarkTeamReviewEmailedAsync(long teamReviewId)
         {
-            await RetryAsync(async () =>
-            {
-                var url = $"{_config.Url}/rest/v1/TeamReviews?id=eq.{teamReviewId}";
-                var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-                request.Headers.Add("apikey", _config.ServiceRoleKey);
-                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                request.Content = new StringContent("[{\"email_sent\": true}]", System.Text.Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.SendAsync(request);
-                var json = await response.Content.ReadAsStringAsync();
-                if (!response.IsSuccessStatusCode)
-                {
-                    throw new Exception($"Supabase error: {response.StatusCode} - {json}");
-                }
-            });
+            await _supabase
+                .From<TeamReview>()
+                .Where(review => review.Id == teamReviewId)
+                .Set(review => review.EmailSent, true)
+                .Update();
         }
 
         public async Task<List<(long Id, string Email)>> GetTradesForReviewerNotificationAsync()
         {
-            var url = $"{_config.Url}/rest/v1/rpc/get_trades_for_reviewer_notification";
-            var request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-            request.Headers.Add("apikey", _config.ServiceRoleKey);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            request.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+            var trades = await _supabase
+                .From<TradeReview>()
+                .Where(trade => trade.ReviewerNotified == false)
+                .Where(trade => trade.ReviewerId != null)
+                .Select("id,reviewer_id")
+                .Get();
 
-            var response = await _httpClient.SendAsync(request);
-            var json = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
+            var result = new List<(long Id, string Email)>();
+
+            foreach (var trade in trades.Models.Where(trade => trade.ReviewerId.HasValue))
             {
-                throw new Exception($"Supabase error: {response.StatusCode} - {json}");
+                var user = await _adminAuth.GetUserById(trade.ReviewerId.Value.ToString());
+
+                if (!string.IsNullOrWhiteSpace(user?.Email))
+                {
+                    result.Add((trade.Id, user.Email));
+                }
             }
 
-            var trades = JsonSerializer.Deserialize<List<TradeReviewerNotificationDto>>(json, _jsonOptions) ?? new List<TradeReviewerNotificationDto>();
-            var result = new List<(long, string)>();
-            foreach (var t in trades)
-            {
-                result.Add((t.Id, t.Email));
-            }
             return result;
         }
 
         public async Task MarkReviewerNotifiedAsync(long tradeId)
         {
-            await RetryAsync(async () =>
-            {
-                var url = $"{_config.Url}/rest/v1/Trades?id=eq.{tradeId}";
-                var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ServiceRoleKey);
-                request.Headers.Add("apikey", _config.ServiceRoleKey);
-                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                request.Content = new StringContent("[{\"reviewer_notified\": true}]", System.Text.Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.SendAsync(request);
-                var json = await response.Content.ReadAsStringAsync();
-                if (!response.IsSuccessStatusCode)
-                {
-                    throw new Exception($"Supabase error: {response.StatusCode} - {json}");
-                }
-            });
-        }
-
-        private static async Task RetryAsync(Func<Task> action, int maxRetries = 3)
-        {
-            for (int attempt = 1; attempt <= maxRetries; attempt++)
-            {
-                try
-                {
-                    await action();
-                    return;
-                }
-                catch when (attempt < maxRetries)
-                {
-                    await Task.Delay(1000 * attempt);
-                }
-            }
-        }
-
-        private class TradeReviewerNotificationDto
-        {
-            public long Id { get; set; }
-            public string Email { get; set; } = string.Empty;
+            await _supabase
+                .From<TradeReview>()
+                .Where(trade => trade.Id == tradeId)
+                .Set(trade => trade.ReviewerNotified, true)
+                .Update();
         }
     }
 }

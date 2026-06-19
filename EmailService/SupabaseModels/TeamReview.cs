@@ -1,14 +1,15 @@
 using System;
 using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
 using EmailService.SupabaseModels.Enums;
+using Supabase.Postgrest.Attributes;
+using Supabase.Postgrest.Models;
 
 namespace EmailService.SupabaseModels
 {
-    [Table("TeamReviews", Schema = "public")]
-    public class TeamReview
+    [Table("TeamReviews")]
+    public class TeamReview : BaseModel
     {
-        [Key]
+        [PrimaryKey("id")]
         [Column("id")]
         public long Id { get; set; }
 
