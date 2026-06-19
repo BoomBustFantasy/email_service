@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Mail;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using EmailService.Configs;
 
@@ -9,10 +10,12 @@ namespace EmailService.Services
     public class SmtpEmailService : IEmailService
     {
         private readonly GmailConfig _config;
+        private readonly ILogger<SmtpEmailService> _logger;
 
-        public SmtpEmailService(IOptions<GmailConfig> config)
+        public SmtpEmailService(IOptions<GmailConfig> config, ILogger<SmtpEmailService> logger)
         {
             _config = config.Value;
+            _logger = logger;
         }
 
         public async Task<bool> SendEmailAsync(string to, string subject, string body, string fromDisplayName = "Boom Bust Trade Review")
@@ -37,8 +40,9 @@ namespace EmailService.Services
                 }
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "SMTP send failed to {Email}", to);
                 return false;
             }
         }
