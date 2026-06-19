@@ -22,10 +22,4 @@ jobs:
         with:
           push: true
           no-cache: true
-          tags: jackbruzan/boom:latest, jackbruzan/boom:${{github.run_number}}
-          build-args: |
-            NUXT_PUBLIC_SUPABASE_URL=${{secrets.NUXT_PUBLIC_SUPABASE_URL}}
-            NUXT_PUBLIC_SUPABASE_KEY=${{secrets.NUXT_PUBLIC_SUPABASE_KEY}}
-            NUXT_PUBLIC_DISCORD_INVITE_URL=${{secrets.NUXT_PUBLIC_DISCORD_INVITE_URL}}
-            NUXT_PUBLIC_STRIPE_PRICE_ID_SINGLE=${{secrets.NUXT_PUBLIC_STRIPE_PRICE_ID_SINGLE}}
-            NUXT_PUBLIC_STRIPE_PRICE_ID_FIVE_PACK=${{secrets.NUXT_PUBLIC_STRIPE_PRICE_ID_FIVE_PACK}}
+          tags: jackbruzan/email_service:latest, jackbruzan/email_service:${{github.run_number}}
