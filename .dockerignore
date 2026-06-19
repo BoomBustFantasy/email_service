@@ -28,4 +28,6 @@ TestResults/
 
 # Don't ignore solution and project files!
 !email_service.sln
-!EmailService/
+
+# NuGet auth config (auth is handled via BuildKit secret at build time)
+nuget.config
