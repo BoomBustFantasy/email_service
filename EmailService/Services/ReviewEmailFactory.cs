@@ -27,4 +27,9 @@ public class ReviewEmailFactory
         Subject: "You have a trade to review!",
         Body: $"Hello,\n\nYou have been assigned to review trade #{tradeId}. You can view it here: {_baseUrl}/trades/{tradeId}\n\nThank you!"
     );
+
+    public EmailMessage BuildTeamReviewerNotification(long reviewId) => new(
+        Subject: "New Team Review Assigned",
+        Body: $"Hello,\n\nA new team review has been assigned to you. You can view it here: {_baseUrl}/team-reviews/{reviewId}\n\nThank you!"
+    );
 }

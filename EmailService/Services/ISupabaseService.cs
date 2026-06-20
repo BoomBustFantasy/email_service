@@ -12,5 +12,7 @@ namespace EmailService.Services
         Task MarkTeamReviewEmailedAsync(long teamReviewId);
         Task<List<(long Id, string Email)>> GetTradesForReviewerNotificationAsync();
         Task MarkReviewerNotifiedAsync(long tradeId);
+        Task<List<TeamReviewNotificationInfo>> GetTeamReviewsForReviewerNotificationAsync();
+        Task MarkTeamReviewerNotifiedAsync(long teamReviewId);
     }
 }

@@ -27,6 +27,9 @@ nuget.config
 # Logs
 *.log
 
+# Local secrets — never commit
+appsettings.json
+
 # Rider
 .idea/
 *.sln.iml

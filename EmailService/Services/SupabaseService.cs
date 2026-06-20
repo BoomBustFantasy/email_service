@@ -136,5 +136,42 @@ namespace EmailService.Services
                 .Set(trade => trade.ReviewerNotified, true)
                 .Update();
         }
+
+        public async Task<List<TeamReviewNotificationInfo>> GetTeamReviewsForReviewerNotificationAsync()
+        {
+            var reviews = await _supabase
+                .From<TeamReview>()
+                .Where(review => review.ReviewerNotified == false)
+                .Where(review => review.ReviewerId != null)
+                .Select("id,reviewer_id")
+                .Get();
+
+            var result = new List<TeamReviewNotificationInfo>();
+
+            foreach (var review in reviews.Models.Where(review => review.ReviewerId.HasValue))
+            {
+                var user = await _adminAuth.GetUserById(review.ReviewerId.Value.ToString());
+
+                if (!string.IsNullOrWhiteSpace(user?.Email))
+                {
+                    result.Add(new TeamReviewNotificationInfo
+                    {
+                        Id = review.Id,
+                        ReviewerEmail = user.Email
+                    });
+                }
+            }
+
+            return result;
+        }
+
+        public async Task MarkTeamReviewerNotifiedAsync(long teamReviewId)
+        {
+            await _supabase
+                .From<TeamReview>()
+                .Where(review => review.Id == teamReviewId)
+                .Set(review => review.ReviewerNotified, true)
+                .Update();
+        }
     }
 }

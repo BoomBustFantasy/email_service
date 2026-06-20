@@ -48,5 +48,8 @@ namespace EmailService.SupabaseModels
 
         [Column("youtube_link")]
         public string? YoutubeLink { get; set; }
+
+        [Column("reviewer_notified")]
+        public bool ReviewerNotified { get; set; }
     }
 }

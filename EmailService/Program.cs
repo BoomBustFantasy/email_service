@@ -23,7 +23,7 @@ IHost host = Host.CreateDefaultBuilder(args)
     })
     .ConfigureServices((hostContext, services) =>
     {
-        services.Configure<GmailConfig>(hostContext.Configuration.GetSection("Gmail"));
+        services.Configure<BrevoConfig>(hostContext.Configuration.GetSection("Brevo"));
         services.Configure<SupabaseConfig>(hostContext.Configuration.GetSection("Supabase"));
         services.Configure<AppConfig>(hostContext.Configuration.GetSection("App"));
 
@@ -41,27 +41,14 @@ IHost host = Host.CreateDefaultBuilder(args)
         });
 
         services.AddScoped<EmailService.Services.ISupabaseService, EmailService.Services.SupabaseService>();
-        services.AddScoped<EmailService.Services.IEmailService, EmailService.Services.SmtpEmailService>();
+        services.AddHttpClient();
+        services.AddScoped<EmailService.Services.IEmailService, EmailService.Services.BrevoEmailService>();
         services.AddScoped<EmailService.Services.ReviewEmailFactory>();
 
         services.AddQuartz(q =>
         {
-            q.ScheduleJob<EmailService.Jobs.SendTradeReviewResults>(trigger => trigger
-                .WithIdentity("sendTradeReviewResultsTrigger", "emailJobs")
-                .StartNow()
-                .WithSimpleSchedule(x => x
-                    .WithIntervalInMinutes(1)
-                    .RepeatForever())
-            );
-            q.ScheduleJob<EmailService.Jobs.SendTeamReviewResults>(trigger => trigger
-                .WithIdentity("sendTeamReviewResultsTrigger", "emailJobs")
-                .StartNow()
-                .WithSimpleSchedule(x => x
-                    .WithIntervalInMinutes(1)
-                    .RepeatForever())
-            );
-            q.ScheduleJob<EmailService.Jobs.NotifyReviewerOfTradeJob>(trigger => trigger
-                .WithIdentity("notifyReviewerOfTradeTrigger", "emailJobs")
+            q.ScheduleJob<EmailService.Jobs.NotifyReviewerOfTeamReviewJob>(trigger => trigger
+                .WithIdentity("notifyReviewerOfTeamReviewTrigger", "emailJobs")
                 .StartNow()
                 .WithSimpleSchedule(x => x
                     .WithIntervalInMinutes(1)
