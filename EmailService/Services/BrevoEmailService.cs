@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -57,6 +58,44 @@ public class BrevoEmailService : IEmailService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send email to {Email}", to);
+            return false;
+        }
+    }
+
+    public async Task<bool> SendTemplateEmailAsync(string to, long templateId, Dictionary<string, string>? templateParams = null)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Clear();
+            client.DefaultRequestHeaders.Add("api-key", _config.ApiKey);
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            var payload = new Dictionary<string, object>
+            {
+                ["to"] = new[] { new { email = to } },
+                ["templateId"] = templateId,
+                ["params"] = templateParams ?? new Dictionary<string, string>()
+            };
+
+            var json = JsonSerializer.Serialize(payload);
+            _logger.LogDebug("Brevo template request payload: {Json}", json);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var response = await client.PostAsync("https://api.brevo.com/v3/smtp/email", content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return true;
+            }
+
+            var error = await response.Content.ReadAsStringAsync();
+            _logger.LogError("Brevo template API error {StatusCode}: {Error}", (int)response.StatusCode, error);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send template email to {Email}", to);
             return false;
         }
     }

@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Quartz;
+using EmailService.Configs;
 using EmailService.Services;
 
 namespace EmailService.Jobs
@@ -10,16 +12,22 @@ namespace EmailService.Jobs
     [DisallowConcurrentExecution]
     public class NotifyReviewerOfTeamReviewJob : IJob
     {
+        private const long TeamReviewNotificationTemplateId = 5;
+
         private readonly ISupabaseService _supabaseService;
         private readonly IEmailService _emailService;
-        private readonly ReviewEmailFactory _emailFactory;
+        private readonly AppConfig _appConfig;
         private readonly ILogger<NotifyReviewerOfTeamReviewJob> _logger;
 
-        public NotifyReviewerOfTeamReviewJob(ISupabaseService supabaseService, IEmailService emailService, ReviewEmailFactory emailFactory, ILogger<NotifyReviewerOfTeamReviewJob> logger)
+        public NotifyReviewerOfTeamReviewJob(
+            ISupabaseService supabaseService,
+            IEmailService emailService,
+            IOptions<AppConfig> appConfig,
+            ILogger<NotifyReviewerOfTeamReviewJob> logger)
         {
             _supabaseService = supabaseService;
             _emailService = emailService;
-            _emailFactory = emailFactory;
+            _appConfig = appConfig.Value;
             _logger = logger;
         }
 
@@ -46,8 +54,17 @@ namespace EmailService.Jobs
                         continue;
                     }
 
-                    var message = _emailFactory.BuildTeamReviewerNotification(review.Id);
-                    var sent = await _emailService.SendEmailAsync(review.ReviewerEmail, message.Subject, message.Body, "Boom Bust Team Review");
+                    // Build template parameters - these map to {{params.variableName}} in Brevo template
+                    var templateParams = new Dictionary<string, string>
+                    {
+                        { "review_id", review.Id.ToString() },
+                        { "review_url", $"{_appConfig.BaseUrl.TrimEnd('/')}/team-reviews/{review.Id}" }
+                    };
+
+                    var sent = await _emailService.SendTemplateEmailAsync(
+                        review.ReviewerEmail,
+                        TeamReviewNotificationTemplateId,
+                        templateParams);
 
                     if (sent)
                     {
