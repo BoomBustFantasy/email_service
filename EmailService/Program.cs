@@ -12,7 +12,7 @@ using EmailService.Configs;
 IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureAppConfiguration((hostingContext, config) =>
     {
-        config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+        config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
         config.AddEnvironmentVariables();
     })
     .UseBoomBustLogging(options =>
