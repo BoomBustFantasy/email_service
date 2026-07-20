@@ -26,4 +26,4 @@ jobs:
           push: true
           no-cache: true
           tags: jackbruzan/email_service:latest, jackbruzan/email_service:${{github.run_number}}
-          secrets: nuget_token=${{secrets.NUGET_AUTH_TOKEN}}
+          secrets: nuget_token=${{secrets.NUGET_TOKEN_2}}
