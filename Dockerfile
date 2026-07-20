@@ -9,6 +9,8 @@ COPY . .
 # Restore with GitHub Packages NuGet auth injected as a BuildKit secret.
 # The PAT is never baked into image layers.
 RUN --mount=type=secret,id=nuget_token \
+    if [ ! -f /run/secrets/nuget_token ]; then echo "ERROR: nuget_token secret not mounted"; exit 1; fi && \
+    if [ ! -s /run/secrets/nuget_token ]; then echo "ERROR: nuget_token secret is empty"; exit 1; fi && \
     dotnet nuget add source \
         "https://nuget.pkg.github.com/BoomBustFantasy/index.json" \
         --name "BoomBustFantasy" \
@@ -21,7 +23,7 @@ WORKDIR /src/EmailService
 RUN dotnet publish -c Release -o /app
 
 # Runtime stage
-FROM mcr.microsoft.com/dotnet/runtime:9.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 COPY --from=build /app ./
 
