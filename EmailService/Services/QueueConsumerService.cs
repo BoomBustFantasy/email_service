@@ -98,7 +98,7 @@ public class QueueConsumerService : BackgroundService
                 {
                     { "queue_name", QueueName },
                     { "vt", VisibilityTimeoutSeconds },
-                    { "batch_size", batchSize }
+                    { "qty", batchSize }
                 });
 
             return result?.ToList() ?? new List<PgmqMessage>();
