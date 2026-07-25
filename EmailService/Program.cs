@@ -29,6 +29,7 @@ builder.Services.Configure<BrevoConfig>(builder.Configuration.GetSection("Brevo"
 builder.Services.Configure<SupabaseConfig>(builder.Configuration.GetSection("Supabase"));
 builder.Services.Configure<AppConfig>(builder.Configuration.GetSection("App"));
 builder.Services.Configure<EmailService.Templates.TemplateConfig>(builder.Configuration.GetSection("Templates"));
+builder.Services.Configure<EmailService.Configs.QueueReliabilityConfig>(builder.Configuration.GetSection("QueueReliability"));
 
 // Supabase client
 builder.Services.AddSingleton(sp =>
@@ -48,6 +49,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddScoped<EmailService.Services.ISupabaseService, EmailService.Services.SupabaseService>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<EmailService.Templates.ITemplateService, EmailService.Templates.TemplateService>();
+builder.Services.AddSingleton<EmailService.Services.QueueMetrics>();
 builder.Services.AddScoped<EmailService.Services.IEmailService, EmailService.Services.BrevoEmailService>();
 builder.Services.AddScoped<EmailService.Services.ReviewEmailFactory>();
 
@@ -94,6 +96,16 @@ app.MapGet("/", () => new
     version = "1.0.0",
     status = "running",
     timestamp = DateTime.UtcNow
+});
+
+// Queue metrics endpoint
+app.MapGet("/metrics", (EmailService.Services.QueueMetrics metrics) => 
+{
+    return Results.Ok(new
+    {
+        queue_metrics = metrics.GetSnapshot(),
+        timestamp = DateTime.UtcNow
+    });
 });
 
 app.MapControllers();

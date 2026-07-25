@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS "OutboundEmailQueue" (
     "template_key" TEXT NOT NULL,
     "recipient_email" TEXT NOT NULL,
     "template_variables" JSONB NOT NULL DEFAULT '{}'::jsonb,
-    "status" TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'dead_letter')),
+    "status" TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'dead_lettered')),
     "retry_count" INTEGER NOT NULL DEFAULT 0,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     "locked_until" TIMESTAMPTZ,
@@ -73,12 +73,38 @@ CREATE INDEX IF NOT EXISTS "idx_email_delivery_log_recipient"
 ON "EmailDeliveryLog" ("recipient_email", "created_at");
 
 -- ============================================================================
+-- DeadLetterEmail Table
+-- ============================================================================
+-- Stores emails that failed after exhausting all retry attempts
+
+CREATE TABLE IF NOT EXISTS "DeadLetterEmail" (
+    "id" BIGSERIAL PRIMARY KEY,
+    "original_queue_id" BIGINT REFERENCES "OutboundEmailQueue"("id") ON DELETE SET NULL,
+    "recipient_email" TEXT NOT NULL,
+    "template_key" TEXT NOT NULL,
+    "template_params" JSONB NOT NULL DEFAULT '{}'::jsonb,
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "last_error" TEXT,
+    "created_at" TIMESTAMPTZ NOT NULL,
+    "moved_to_dlq_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index for DLQ monitoring
+CREATE INDEX IF NOT EXISTS "idx_dead_letter_email_moved_at" 
+ON "DeadLetterEmail" ("moved_to_dlq_at");
+
+-- Index for error analysis
+CREATE INDEX IF NOT EXISTS "idx_dead_letter_email_template" 
+ON "DeadLetterEmail" ("template_key", "moved_to_dlq_at");
+
+-- ============================================================================
 -- Row Level Security (RLS)
 -- ============================================================================
 -- Enable RLS on both tables
 
 ALTER TABLE "OutboundEmailQueue" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "EmailDeliveryLog" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "DeadLetterEmail" ENABLE ROW LEVEL SECURITY;
 
 -- Service role policy for queue operations
 CREATE POLICY "service_role_all_outbound_email_queue" 
@@ -91,6 +117,14 @@ WITH CHECK (true);
 -- Service role policy for delivery log operations
 CREATE POLICY "service_role_all_email_delivery_log" 
 ON "EmailDeliveryLog"
+FOR ALL 
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- Service role policy for dead letter queue operations
+CREATE POLICY "service_role_all_dead_letter_email" 
+ON "DeadLetterEmail"
 FOR ALL 
 TO service_role
 USING (true)
@@ -110,3 +144,8 @@ COMMENT ON TABLE "EmailDeliveryLog" IS 'Comprehensive audit log of all email del
 COMMENT ON COLUMN "EmailDeliveryLog"."idempotency_key" IS 'Same key as queue message for deduplication';
 COMMENT ON COLUMN "EmailDeliveryLog"."template_variables" IS 'Full JSON payload retained for troubleshooting';
 COMMENT ON COLUMN "EmailDeliveryLog"."status" IS 'Delivery lifecycle status from pending through final outcome';
+
+COMMENT ON TABLE "DeadLetterEmail" IS 'Dead letter queue for emails that failed after exhausting all retry attempts';
+COMMENT ON COLUMN "DeadLetterEmail"."original_queue_id" IS 'Reference to the original OutboundEmailQueue message';
+COMMENT ON COLUMN "DeadLetterEmail"."attempts" IS 'Total number of delivery attempts before moving to DLQ';
+COMMENT ON COLUMN "DeadLetterEmail"."moved_to_dlq_at" IS 'Timestamp when message was moved to dead letter queue';
