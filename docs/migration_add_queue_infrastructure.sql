@@ -149,3 +149,42 @@ COMMENT ON TABLE "DeadLetterEmail" IS 'Dead letter queue for emails that failed 
 COMMENT ON COLUMN "DeadLetterEmail"."original_queue_id" IS 'Reference to the original OutboundEmailQueue message';
 COMMENT ON COLUMN "DeadLetterEmail"."attempts" IS 'Total number of delivery attempts before moving to DLQ';
 COMMENT ON COLUMN "DeadLetterEmail"."moved_to_dlq_at" IS 'Timestamp when message was moved to dead letter queue';
+
+-- ============================================================================
+-- EmailSuppression Table
+-- ============================================================================
+-- Tracks email addresses that have unsubscribed or been suppressed
+
+CREATE TABLE IF NOT EXISTS "EmailSuppression" (
+    "id" BIGSERIAL PRIMARY KEY,
+    "email" TEXT NOT NULL,
+    "reason" TEXT NOT NULL CHECK (reason IN (
+        'unsubscribe', 'hard_bounce', 'soft_bounce', 
+        'invalid', 'spam', 'blocked', 'unknown'
+    )),
+    "suppressed_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "details" TEXT
+);
+
+-- Unique constraint on email + reason combination
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_email_suppression_email_reason" 
+ON "EmailSuppression" ("email", "reason");
+
+-- Index for suppression checks
+CREATE INDEX IF NOT EXISTS "idx_email_suppression_email" 
+ON "EmailSuppression" ("email");
+
+-- Enable RLS
+ALTER TABLE "EmailSuppression" ENABLE ROW LEVEL SECURITY;
+
+-- Service role policy for suppression operations
+CREATE POLICY "service_role_all_email_suppression" 
+ON "EmailSuppression"
+FOR ALL 
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+COMMENT ON TABLE "EmailSuppression" IS 'Email addresses suppressed due to unsubscribes, bounces, or spam complaints';
+COMMENT ON COLUMN "EmailSuppression"."reason" IS 'Reason for suppression: unsubscribe, hard_bounce, soft_bounce, invalid, spam, blocked';
+COMMENT ON COLUMN "EmailSuppression"."suppressed_at" IS 'Timestamp when email was suppressed';
