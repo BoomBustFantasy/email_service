@@ -28,6 +28,7 @@ builder.Host.UseBoomBustLogging(options =>
 builder.Services.Configure<BrevoConfig>(builder.Configuration.GetSection("Brevo"));
 builder.Services.Configure<SupabaseConfig>(builder.Configuration.GetSection("Supabase"));
 builder.Services.Configure<AppConfig>(builder.Configuration.GetSection("App"));
+builder.Services.Configure<EmailService.Templates.TemplateConfig>(builder.Configuration.GetSection("Templates"));
 
 // Supabase client
 builder.Services.AddSingleton(sp =>
@@ -46,6 +47,7 @@ builder.Services.AddSingleton(sp =>
 // Application services
 builder.Services.AddScoped<EmailService.Services.ISupabaseService, EmailService.Services.SupabaseService>();
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<EmailService.Templates.ITemplateService, EmailService.Templates.TemplateService>();
 builder.Services.AddScoped<EmailService.Services.IEmailService, EmailService.Services.BrevoEmailService>();
 builder.Services.AddScoped<EmailService.Services.ReviewEmailFactory>();
 
