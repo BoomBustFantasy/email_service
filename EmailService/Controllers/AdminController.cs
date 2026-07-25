@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using EmailService.Filters;
 using EmailService.SupabaseModels;
 using Supabase;
+using System.Text.Json;
 
 namespace EmailService.Controllers;
 
@@ -14,6 +15,8 @@ public class AdminController : ControllerBase
 {
     private readonly ILogger<AdminController> _logger;
     private readonly Client _supabaseClient;
+    private const string QueueName = "email_outbound";
+    private const string DlqName = "email_outbound_dlq";
     
     public AdminController(
         ILogger<AdminController> logger,
@@ -24,9 +27,9 @@ public class AdminController : ControllerBase
     }
     
     /// <summary>
-    /// Replay dead letter messages back to the queue
+    /// Replay dead letter messages back to the main queue
     /// </summary>
-    /// <param name="messageIds">List of dead letter message IDs to replay (max 100)</param>
+    /// <param name="messageIds">List of pgmq DLQ message IDs to replay (max 100)</param>
     [HttpPost("replay-dead-letters")]
     [AdminAuth]
     public async Task<IActionResult> ReplayDeadLetters([FromBody] List<long> messageIds)
@@ -44,7 +47,7 @@ public class AdminController : ControllerBase
                 return BadRequest(new { error = "Maximum batch size is 100 messages" });
             }
             
-            _logger.LogInformation("Replaying {Count} dead letter messages", messageIds.Count);
+            _logger.LogInformation("Replaying {Count} dead letter messages from pgmq", messageIds.Count);
             
             var results = new List<ReplayResult>();
             
@@ -90,97 +93,123 @@ public class AdminController : ControllerBase
         }
     }
     
-    private async Task<ReplayResult> ReplayDeadLetterMessageAsync(long deadLetterMessageId)
+    /// <summary>
+    /// Get dead letter queue statistics
+    /// </summary>
+    [HttpGet("dead-letter-stats")]
+    [AdminAuth]
+    public async Task<IActionResult> GetDeadLetterStats()
     {
-        // Fetch the dead letter message
-        var dlqResponse = await _supabaseClient
-            .From<DeadLetterEmail>()
-            .Where(x => x.Id == deadLetterMessageId)
-            .Get();
-        
-        if (dlqResponse.Models.Count == 0)
+        try
         {
-            _logger.LogWarning("Dead letter message {MessageId} not found", deadLetterMessageId);
+            // Get DLQ depth
+            var dlqDepth = await _supabaseClient.Rpc<int?>(
+                "pgmq.queue_depth",
+                new Dictionary<string, object>
+                {
+                    { "queue_name", DlqName }
+                });
+            
+            return Ok(new
+            {
+                dlq_depth = dlqDepth ?? 0,
+                queue_name = DlqName
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting DLQ stats");
+            return StatusCode(500, new { error = "Internal server error" });
+        }
+    }
+    
+    private async Task<ReplayResult> ReplayDeadLetterMessageAsync(long dlqMessageId)
+    {
+        // Read the message from DLQ (this makes it visible to us)
+        var dlqMessages = await _supabaseClient.Rpc<PgmqDlqMessage[]>(
+            "pgmq.read",
+            new Dictionary<string, object>
+            {
+                { "queue_name", DlqName },
+                { "vt", 300 }, // 5 minute visibility timeout
+                { "qty", 100 }
+            });
+
+        if (dlqMessages == null || dlqMessages.Length == 0)
+        {
             return new ReplayResult
             {
-                DeadLetterMessageId = deadLetterMessageId,
+                DeadLetterMessageId = dlqMessageId,
                 Success = false,
-                Error = "Message not found"
+                Error = "Message not found in DLQ"
             };
         }
-        
-        var dlqMessage = dlqResponse.Models.First();
-        
-        // Check if original queue message still exists
-        OutboundEmailQueue? originalMessage = null;
-        if (dlqMessage.OriginalQueueId != null)
+
+        var dlqMessage = dlqMessages.FirstOrDefault(m => m.MsgId == dlqMessageId);
+        if (dlqMessage == null)
         {
-            var originalResponse = await _supabaseClient
-                .From<OutboundEmailQueue>()
-                .Where(x => x.Id == dlqMessage.OriginalQueueId)
-                .Get();
-            
-            if (originalResponse.Models.Count > 0)
+            return new ReplayResult
             {
-                originalMessage = originalResponse.Models.First();
+                DeadLetterMessageId = dlqMessageId,
+                Success = false,
+                Error = "Message not found in DLQ"
+            };
+        }
+
+        try
+        {
+            // Re-enqueue the message to the main queue
+            var sendResult = await _supabaseClient.Rpc<long?>(
+                "pgmq.send",
+                new Dictionary<string, object>
+                {
+                    { "queue_name", QueueName },
+                    { "msg", dlqMessage.Message }
+                });
+
+            if (sendResult.HasValue)
+            {
+                // Delete from DLQ
+                await _supabaseClient.Rpc(
+                    "pgmq.delete",
+                    new Dictionary<string, object>
+                    {
+                        { "queue_name", DlqName },
+                        { "msg_id", dlqMessageId }
+                    });
+
+                _logger.LogInformation(
+                    "Replayed message {DlqMessageId} from DLQ to main queue as message {NewMessageId}",
+                    dlqMessageId,
+                    sendResult.Value);
+
+                return new ReplayResult
+                {
+                    DeadLetterMessageId = dlqMessageId,
+                    NewQueueMessageId = sendResult.Value,
+                    Success = true
+                };
+            }
+            else
+            {
+                return new ReplayResult
+                {
+                    DeadLetterMessageId = dlqMessageId,
+                    Success = false,
+                    Error = "Failed to send message to main queue"
+                };
             }
         }
-        
-        // If original exists and is already dead_lettered, reset it
-        if (originalMessage != null && originalMessage.Status == "dead_lettered")
+        catch (Exception ex)
         {
-            await _supabaseClient
-                .From<OutboundEmailQueue>()
-                .Where(x => x.Id == originalMessage.Id)
-                .Set(x => x.Status!, "pending")
-                .Set(x => x.RetryCount!, 0)
-                .Set(x => x.LockedUntil!, null)
-                .Set(x => x.LastError!, null)
-                .Update();
-            
-            _logger.LogInformation(
-                "Reset original queue message {MessageId} to pending",
-                originalMessage.Id);
-            
+            _logger.LogError(ex, "Error replaying message {MessageId}", dlqMessageId);
             return new ReplayResult
             {
-                DeadLetterMessageId = deadLetterMessageId,
-                QueueMessageId = originalMessage.Id,
-                Success = true
+                DeadLetterMessageId = dlqMessageId,
+                Success = false,
+                Error = ex.Message
             };
         }
-        
-        // Otherwise, create a new queue message preserving the original idempotency key
-        // Generate a new idempotency key with replay suffix to avoid conflicts
-        var replayIdempotencyKey = $"{Guid.NewGuid()}-replay-{deadLetterMessageId}";
-        
-        var newQueueMessage = new OutboundEmailQueue
-        {
-            IdempotencyKey = replayIdempotencyKey,
-            TemplateKey = dlqMessage.TemplateKey,
-            RecipientEmail = dlqMessage.RecipientEmail,
-            TemplateVariables = dlqMessage.TemplateParams,
-            Status = "pending",
-            RetryCount = 0
-        };
-        
-        var insertResponse = await _supabaseClient
-            .From<OutboundEmailQueue>()
-            .Insert(newQueueMessage);
-        
-        var insertedMessage = insertResponse.Models.First();
-        
-        _logger.LogInformation(
-            "Created new queue message {MessageId} from dead letter {DlqMessageId}",
-            insertedMessage.Id,
-            deadLetterMessageId);
-        
-        return new ReplayResult
-        {
-            DeadLetterMessageId = deadLetterMessageId,
-            QueueMessageId = insertedMessage.Id,
-            Success = true
-        };
     }
 }
 
@@ -190,7 +219,19 @@ public class AdminController : ControllerBase
 public class ReplayResult
 {
     public long DeadLetterMessageId { get; set; }
-    public long? QueueMessageId { get; set; }
+    public long? NewQueueMessageId { get; set; }
     public bool Success { get; set; }
     public string? Error { get; set; }
+}
+
+/// <summary>
+/// Represents a message from pgmq DLQ
+/// </summary>
+public class PgmqDlqMessage
+{
+    public long MsgId { get; set; }
+    public int ReadCount { get; set; }
+    public DateTime EnqueuedAt { get; set; }
+    public DateTime Vt { get; set; }
+    public required string Message { get; set; }
 }

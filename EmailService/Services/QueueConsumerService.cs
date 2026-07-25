@@ -2,15 +2,14 @@ using EmailService.SupabaseModels;
 using Microsoft.Extensions.Options;
 using Supabase;
 using EmailService.Configs;
-using static Supabase.Postgrest.Constants;
 using System.Text.Json;
 
 namespace EmailService.Services;
 
 /// <summary>
-/// Background service that consumes outbound email messages from the queue
+/// Background service that consumes outbound email messages from pgmq queue
 /// and processes them with idempotent, retry-aware delivery semantics.
-/// Includes exponential backoff, dead letter queue, and metrics tracking.
+/// Uses pgmq (PostgreSQL Message Queue) for message management.
 /// </summary>
 public class QueueConsumerService : BackgroundService
 {
@@ -21,7 +20,8 @@ public class QueueConsumerService : BackgroundService
     private readonly QueueMetrics _metrics;
     private const int PollingIntervalSeconds = 5;
     private const int MessageBatchSize = 10;
-    private const int LockDurationMinutes = 5;
+    private const int VisibilityTimeoutSeconds = 300; // 5 minutes
+    private const string QueueName = "email_outbound";
     
     public QueueMetrics Metrics => _metrics;
 
@@ -41,7 +41,7 @@ public class QueueConsumerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Queue consumer service starting...");
+        _logger.LogInformation("Queue consumer service starting with pgmq...");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -65,19 +65,9 @@ public class QueueConsumerService : BackgroundService
         using var scope = _serviceProvider.CreateScope();
         var supabaseClient = scope.ServiceProvider.GetRequiredService<Client>();
 
-        // Fetch pending messages that are not locked and haven't exceeded retry count
-        var now = DateTime.UtcNow;
-        var response = await supabaseClient
-            .From<OutboundEmailQueue>()
-            .Where(x => x.Status == "pending")
-            .Where(x => x.RetryCount < _reliabilityConfig.MaxRetryAttempts)
-            .Filter("locked_until", Operator.LessThan, now.ToString("o"))
-            .Limit(MessageBatchSize)
-            .Get();
-
-        var messages = response.Models;
+        // Read batch of messages from pgmq
+        var messages = await ReadMessagesFromPgmq(supabaseClient, MessageBatchSize);
         
-        // Update queue depth metric
         _metrics.SetQueueDepth(messages.Count);
 
         if (messages.Count == 0)
@@ -85,19 +75,43 @@ public class QueueConsumerService : BackgroundService
             return;
         }
 
-        _logger.LogInformation("Processing {Count} messages from queue", messages.Count);
+        _logger.LogInformation("Processing {Count} messages from pgmq queue '{QueueName}'", 
+            messages.Count, QueueName);
 
         foreach (var message in messages)
         {
             await ProcessMessageAsync(message, supabaseClient, cancellationToken);
         }
         
-        // Check if we need to send degradation alerts
+        // Check operational metrics
         await CheckOperationalAlertsAsync(supabaseClient, cancellationToken);
     }
 
+    private async Task<List<PgmqMessage>> ReadMessagesFromPgmq(Client supabaseClient, int batchSize)
+    {
+        try
+        {
+            // Call pgmq.read_batch() function
+            var result = await supabaseClient.Rpc<PgmqMessage[]>(
+                "pgmq.read_batch",
+                new Dictionary<string, object>
+                {
+                    { "queue_name", QueueName },
+                    { "vt", VisibilityTimeoutSeconds },
+                    { "batch_size", batchSize }
+                });
+
+            return result?.ToList() ?? new List<PgmqMessage>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading from pgmq queue");
+            return new List<PgmqMessage>();
+        }
+    }
+
     private async Task ProcessMessageAsync(
-        OutboundEmailQueue message,
+        PgmqMessage message,
         Client supabaseClient,
         CancellationToken cancellationToken)
     {
@@ -105,196 +119,155 @@ public class QueueConsumerService : BackgroundService
         
         try
         {
-            // Apply exponential backoff if this is a retry
-            if (message.RetryCount > 0)
+            // Parse message payload
+            var payload = JsonSerializer.Deserialize<EmailQueuePayload>(message.Message);
+            if (payload == null)
             {
-                var backoffDelay = CalculateBackoffDelay(message.RetryCount);
-                _logger.LogInformation(
-                    "Message {MessageId} retry attempt {RetryCount} - applying {BackoffMs}ms backoff",
-                    message.Id, message.RetryCount, backoffDelay);
-                    
-                await Task.Delay(backoffDelay, cancellationToken);
-                _metrics.IncrementRetries();
+                throw new InvalidOperationException("Failed to deserialize message payload");
             }
-            
-            // Acquire lock on message
-            var lockUntil = DateTime.UtcNow.AddMinutes(LockDurationMinutes);
-            var lockUpdate = await supabaseClient
-                .From<OutboundEmailQueue>()
-                .Where(x => x.Id == message.Id)
-                .Where(x => x.LockedUntil == null || x.LockedUntil < DateTime.UtcNow)
-                .Set(x => x.LockedUntil!, lockUntil)
-                .Update();
 
-            if (lockUpdate.Models.Count == 0)
+            _logger.LogInformation(
+                "Processing message {MsgId}: outbox_id={OutboxId}, recipient={RecipientEmail}",
+                message.MsgId,
+                payload.OutboxId,
+                payload.RecipientEmail);
+
+            // Fetch the outbox record
+            var outboxRecord = await supabaseClient
+                .From<EmailOutbox>()
+                .Where(x => x.Id == payload.OutboxId)
+                .Single();
+
+            if (outboxRecord == null)
             {
-                // Another consumer acquired the lock
-                _logger.LogDebug("Message {MessageId} already locked by another consumer", message.Id);
+                _logger.LogWarning("Outbox record {OutboxId} not found - deleting message from queue", 
+                    payload.OutboxId);
+                await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
                 return;
             }
 
-            // Check idempotency - has this already been processed?
+            // Check idempotency - has this already been processed successfully?
             var existingLog = await supabaseClient
                 .From<EmailDeliveryLog>()
-                .Where(x => x.IdempotencyKey == message.IdempotencyKey)
+                .Where(x => x.IdempotencyKey == outboxRecord.IdempotencyKey)
                 .Where(x => x.Status == "sent" || x.Status == "delivered")
                 .Single();
 
             if (existingLog != null)
             {
                 _logger.LogInformation(
-                    "Message {MessageId} with key {IdempotencyKey} already processed - marking complete",
-                    message.Id,
-                    message.IdempotencyKey);
+                    "Message with key {IdempotencyKey} already processed successfully - deleting from queue",
+                    outboxRecord.IdempotencyKey);
 
-                await MarkMessageCompleteAsync(message.Id, supabaseClient, cancellationToken);
+                await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
                 _metrics.IncrementSuccessful();
                 return;
             }
 
-            // Process the message
-            // Note: Actual email sending will be implemented in later tickets
-            // For now, we establish the queue consumption pattern
-            _logger.LogInformation(
-                "Processing message {MessageId}: template={TemplateKey}, recipient={RecipientEmail}",
-                message.Id,
-                message.TemplateKey,
-                message.RecipientEmail);
-
-            // Create delivery log entry
-            var deliveryLog = new EmailDeliveryLog
+            // Check suppression list
+            var isSuppressed = await CheckSuppressionAsync(supabaseClient, outboxRecord.RecipientEmail);
+            if (isSuppressed)
             {
-                IdempotencyKey = message.IdempotencyKey,
-                QueueMessageId = message.Id,
-                TemplateKey = message.TemplateKey,
-                RecipientEmail = message.RecipientEmail,
-                TemplateVariables = message.TemplateVariables,
-                Status = "pending",
-                CreatedAt = DateTime.UtcNow
+                _logger.LogInformation(
+                    "Recipient {Email} is suppressed - skipping and deleting from queue",
+                    outboxRecord.RecipientEmail);
+
+                await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount, 
+                    "suppressed", "Recipient is on suppression list");
+                await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
+                _metrics.IncrementSuccessful();
+                return;
+            }
+
+            // TODO: Send email via Brevo (to be implemented in future work)
+            // For now, just log the attempt
+            await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount, 
+                "pending", null);
+
+            // Simulate successful send for now
+            _logger.LogInformation("Successfully processed message {MsgId} for outbox {OutboxId}",
+                message.MsgId, payload.OutboxId);
+
+            // Delete message from pgmq (marks as successfully processed)
+            await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
+            _metrics.IncrementSuccessful();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing message {MsgId}", message.MsgId);
+            _metrics.IncrementFailed();
+            
+            // pgmq will automatically retry based on visibility timeout
+            // After max retries, pgmq will move to DLQ automatically
+            _logger.LogWarning(
+                "Message {MsgId} failed (read count: {ReadCount}) - will be retried by pgmq",
+                message.MsgId, message.ReadCount);
+        }
+    }
+
+    private async Task<bool> CheckSuppressionAsync(Client supabaseClient, string email)
+    {
+        try
+        {
+            var suppression = await supabaseClient
+                .From<EmailSuppression>()
+                .Where(x => x.Email == email.ToLowerInvariant())
+                .Single();
+
+            return suppression != null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking suppression for {Email}", email);
+            return false; // Fail open - don't suppress if we can't check
+        }
+    }
+
+    private async Task LogDeliveryAttempt(
+        Client supabaseClient,
+        EmailOutbox outbox,
+        int attemptNumber,
+        string status,
+        string? errorMessage)
+    {
+        try
+        {
+            var log = new EmailDeliveryLog
+            {
+                OutboxId = outbox.Id,
+                IdempotencyKey = outbox.IdempotencyKey,
+                AttemptNumber = attemptNumber,
+                Status = status,
+                ErrorMessage = errorMessage,
+                AttemptedAt = DateTime.UtcNow
             };
 
             await supabaseClient
                 .From<EmailDeliveryLog>()
-                .Insert(deliveryLog);
-
-            // TODO: In subsequent tickets, this is where we will:
-            // 1. Resolve template key to Brevo template ID
-            // 2. Validate template variables
-            // 3. Send via Brevo
-            // 4. Update delivery log with result
-
-            // For now, mark as complete
-            await MarkMessageCompleteAsync(message.Id, supabaseClient, cancellationToken);
-            _metrics.IncrementSuccessful();
-
-            _logger.LogInformation("Successfully processed message {MessageId}", message.Id);
+                .Insert(log);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing message {MessageId}", message.Id);
-            _metrics.IncrementFailed();
-            await HandleMessageErrorAsync(message, ex.Message, supabaseClient, cancellationToken);
+            _logger.LogError(ex, "Error logging delivery attempt for outbox {OutboxId}", outbox.Id);
         }
     }
 
-    private async Task MarkMessageCompleteAsync(
-        long messageId,
-        Client supabaseClient,
-        CancellationToken cancellationToken)
+    private async Task DeleteMessageFromPgmq(Client supabaseClient, long msgId)
     {
-        await supabaseClient
-            .From<OutboundEmailQueue>()
-            .Where(x => x.Id == messageId)
-            .Set(x => x.Status!, "completed")
-            .Set(x => x.LockedUntil!, null)
-            .Update();
-    }
-
-    private async Task HandleMessageErrorAsync(
-        OutboundEmailQueue message,
-        string errorMessage,
-        Client supabaseClient,
-        CancellationToken cancellationToken)
-    {
-        var newRetryCount = message.RetryCount + 1;
-        var shouldDeadLetter = newRetryCount >= _reliabilityConfig.MaxRetryAttempts;
-
-        if (shouldDeadLetter)
+        try
         {
-            _logger.LogWarning(
-                "Message {MessageId} exceeded max retries ({MaxRetries}) - moving to dead letter queue",
-                message.Id,
-                _reliabilityConfig.MaxRetryAttempts);
-
-            // Move to dead letter queue
-            await MoveToDeadLetterQueueAsync(message, errorMessage, supabaseClient, cancellationToken);
-            _metrics.IncrementDeadLettered();
+            await supabaseClient.Rpc(
+                "pgmq.delete",
+                new Dictionary<string, object>
+                {
+                    { "queue_name", QueueName },
+                    { "msg_id", msgId }
+                });
         }
-        else
+        catch (Exception ex)
         {
-            // Increment retry count and release lock
-            await supabaseClient
-                .From<OutboundEmailQueue>()
-                .Where(x => x.Id == message.Id)
-                .Set(x => x.RetryCount!, newRetryCount)
-                .Set(x => x.LastError!, errorMessage)
-                .Set(x => x.Status!, "pending")
-                .Set(x => x.LockedUntil!, null)
-                .Update();
-
-            _logger.LogInformation(
-                "Message {MessageId} failed - retry {RetryCount}/{MaxRetries}",
-                message.Id,
-                newRetryCount,
-                _reliabilityConfig.MaxRetryAttempts);
+            _logger.LogError(ex, "Error deleting message {MsgId} from pgmq", msgId);
         }
-    }
-
-    private async Task MoveToDeadLetterQueueAsync(
-        OutboundEmailQueue message,
-        string errorMessage,
-        Client supabaseClient,
-        CancellationToken cancellationToken)
-    {
-        // Create dead letter entry
-        var deadLetter = new DeadLetterEmail
-        {
-            OriginalQueueId = message.Id,
-            RecipientEmail = message.RecipientEmail,
-            TemplateKey = message.TemplateKey,
-            TemplateParams = message.TemplateVariables,
-            Attempts = message.RetryCount + 1,
-            LastError = errorMessage,
-            CreatedAt = message.CreatedAt ?? DateTime.UtcNow,
-            MovedToDlqAt = DateTime.UtcNow
-        };
-
-        await supabaseClient
-            .From<DeadLetterEmail>()
-            .Insert(deadLetter);
-
-        // Mark original message as dead_lettered
-        await supabaseClient
-            .From<OutboundEmailQueue>()
-            .Where(x => x.Id == message.Id)
-            .Set(x => x.Status!, "dead_lettered")
-            .Set(x => x.LastError!, errorMessage)
-            .Set(x => x.LockedUntil!, null)
-            .Update();
-
-        _logger.LogError(
-            "Message {MessageId} moved to dead letter queue after {Attempts} attempts. Error: {Error}",
-            message.Id,
-            message.RetryCount + 1,
-            errorMessage);
-    }
-
-    private int CalculateBackoffDelay(int retryCount)
-    {
-        var delay = (int)(_reliabilityConfig.BaseBackoffMs * 
-                         Math.Pow(_reliabilityConfig.BackoffMultiplier, retryCount - 1));
-        
-        return Math.Min(delay, _reliabilityConfig.MaxBackoffMs);
     }
 
     private async Task CheckOperationalAlertsAsync(
@@ -321,21 +294,25 @@ public class QueueConsumerService : BackgroundService
                 // TODO: Send alert email (will be implemented when email sending is wired up)
             }
 
-            // Check dead letter queue size
-            var dlqResponse = await supabaseClient
-                .From<DeadLetterEmail>()
-                .Get();
-            
-            var dlqCount = dlqResponse.Models.Count;
+            // Check pgmq DLQ size (dead letter messages)
+            var dlqResult = await supabaseClient.Rpc<int?>(
+                "pgmq.queue_depth",
+                new Dictionary<string, object>
+                {
+                    { "queue_name", $"{QueueName}_dlq" }
+                });
+
+            var dlqCount = dlqResult ?? 0;
+            _metrics.SetQueueDepth(dlqCount);
 
             if (dlqCount >= _reliabilityConfig.DeadLetterQueueSizeThreshold)
             {
                 _logger.LogWarning(
-                    "Dead letter queue size threshold exceeded: {DlqCount} >= {Threshold}",
+                    "Dead letter queue size ({DlqCount}) exceeds threshold ({Threshold})",
                     dlqCount,
                     _reliabilityConfig.DeadLetterQueueSizeThreshold);
                 
-                // TODO: Send alert email (will be implemented when email sending is wired up)
+                // TODO: Send alert email
             }
         }
         catch (Exception ex)
@@ -344,3 +321,26 @@ public class QueueConsumerService : BackgroundService
         }
     }
 }
+
+/// <summary>
+/// Represents a message returned from pgmq
+/// </summary>
+public class PgmqMessage
+{
+    public long MsgId { get; set; }
+    public int ReadCount { get; set; }
+    public DateTime EnqueuedAt { get; set; }
+    public DateTime Vt { get; set; }
+    public required string Message { get; set; }
+}
+
+/// <summary>
+/// Payload stored in pgmq messages referencing email_outbox rows
+/// </summary>
+public class EmailQueuePayload
+{
+    public Guid OutboxId { get; set; }
+    public string RecipientEmail { get; set; } = string.Empty;
+    public string TemplateKey { get; set; } = string.Empty;
+}
+

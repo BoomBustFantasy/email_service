@@ -109,12 +109,12 @@ public class BrevoWebhookController : ControllerBase
             return;
         }
         
-        // Find delivery log by Brevo message ID
+        // Find delivery log by Brevo message ID (stored in ExternalId)
         if (!string.IsNullOrWhiteSpace(webhookEvent.MessageId))
         {
             var deliveryLogs = await _supabaseClient
                 .From<EmailDeliveryLog>()
-                .Where(x => x.BrevoMessageId == webhookEvent.MessageId)
+                .Where(x => x.ExternalId == webhookEvent.MessageId)
                 .Get();
             
             if (deliveryLogs.Models.Count > 0)
@@ -169,42 +169,25 @@ public class BrevoWebhookController : ControllerBase
         BrevoWebhookEvent webhookEvent,
         string status)
     {
-        var now = DateTime.UtcNow;
-        
         // Update the delivery log with event details
         var update = _supabaseClient
             .From<EmailDeliveryLog>()
             .Where(x => x.Id == log.Id)
-            .Set(x => x.Status!, status)
-            .Set(x => x.UpdatedAt!, now);
+            .Set(x => x.Status!, status);
         
-        // Set specific timestamps based on event type
-        switch (status)
+        // Add error message for failure events
+        if (status == "bounced" || status == "failed" || status == "spam" || status == "blocked")
         {
-            case "sent":
-                update = update.Set(x => x.SentAt!, now);
-                break;
-            case "delivered":
-                update = update.Set(x => x.DeliveredAt!, now);
-                break;
-            case "bounced":
-                update = update.Set(x => x.BouncedAt!, now);
-                update = update.Set(x => x.ErrorMessage!, webhookEvent.Reason ?? "Bounced");
-                break;
-            case "failed":
-            case "spam":
-            case "blocked":
-                update = update.Set(x => x.ErrorMessage!, webhookEvent.Reason ?? status);
-                break;
+            update = update.Set(x => x.ErrorMessage!, webhookEvent.Reason ?? status);
         }
         
         await update.Update();
         
         _logger.LogInformation(
-            "Updated delivery log {LogId}: status={Status}, email={Email}",
+            "Updated delivery log {LogId}: status={Status}, outbox_id={OutboxId}",
             log.Id,
             status,
-            log.RecipientEmail);
+            log.OutboxId);
     }
     
     private async Task HandleSuppressionEventAsync(BrevoWebhookEvent webhookEvent)
@@ -234,8 +217,8 @@ public class BrevoWebhookController : ControllerBase
             {
                 Email = webhookEvent.Email,
                 Reason = reason,
-                SuppressedAt = DateTime.UtcNow,
-                Details = webhookEvent.Reason
+                SuppressionType = "all",
+                CreatedAt = DateTime.UtcNow
             };
             
             await _supabaseClient

@@ -7,12 +7,12 @@ namespace EmailService.SupabaseModels;
 /// <summary>
 /// Tracks email addresses that have unsubscribed or been suppressed
 /// </summary>
-[Table("EmailSuppression")]
+[Table("email_suppression")]
 public class EmailSuppression : BaseModel
 {
     [PrimaryKey("id", false)]
     [JsonPropertyName("id")]
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     
     [Column("email")]
     [JsonPropertyName("email")]
@@ -22,11 +22,11 @@ public class EmailSuppression : BaseModel
     [JsonPropertyName("reason")]
     public string Reason { get; set; } = string.Empty;
     
-    [Column("suppressed_at")]
-    [JsonPropertyName("suppressed_at")]
-    public DateTime SuppressedAt { get; set; }
+    [Column("suppression_type")]
+    [JsonPropertyName("suppression_type")]
+    public string SuppressionType { get; set; } = "all";
     
-    [Column("details")]
-    [JsonPropertyName("details")]
-    public string? Details { get; set; }
+    [Column("created_at")]
+    [JsonPropertyName("created_at")]
+    public DateTime CreatedAt { get; set; }
 }
