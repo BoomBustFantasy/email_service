@@ -29,7 +29,4 @@ public class EmailDeliveryLog : BaseModel
 
     [Column("attempted_at")]
     public DateTime? AttemptedAt { get; set; }
-
-    [Column("updated_at")]
-    public DateTime? UpdatedAt { get; set; }
 }

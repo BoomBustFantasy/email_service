@@ -1457,3 +1457,95 @@ Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"
    at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
    at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
    at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:28:56.491 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:01.584 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:06.674 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:11.758 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:16.858 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:21.959 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:27.044 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:32.134 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:39.560 -05:00 [INF] Email service starting with web host + queue consumer runtime
+2026-07-25 15:29:39.593 -05:00 [INF] Queue consumer service starting with pgmq...
+2026-07-25 15:29:39.840 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:44.951 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:50.041 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:29:55.127 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:30:00.227 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:30:05.324 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:30:10.417 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:30:15.514 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:30:20.616 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95
+2026-07-25 15:30:25.704 -05:00 [ERR] Error reading from pgmq queue
+Supabase.Postgrest.Exceptions.PostgrestException: {"code":"PGRST202","details":"Searched for the function public.pgmq.read with parameters qty, queue_name, vt or with a single unnamed json/jsonb parameter, but no matches were found in the schema cache.","hint":null,"message":"Could not find the function public.pgmq.read(qty, queue_name, vt) in the schema cache"}
+   at Supabase.Postgrest.Helpers.MakeRequest(ClientOptions clientOptions, HttpMethod method, String url, JsonSerializerSettings serializerSettings, Object data, Dictionary`2 headers, CancellationToken cancellationToken)
+   at Supabase.Postgrest.Client.Rpc[TModeledResponse](String procedureName, Object parameters)
+   at EmailService.Services.QueueConsumerService.ReadMessagesFromPgmq(Client supabaseClient, Int32 batchSize) in C:\Users\jackb\source\repos\doink\email_service\EmailService\Services\QueueConsumerService.cs:line 95

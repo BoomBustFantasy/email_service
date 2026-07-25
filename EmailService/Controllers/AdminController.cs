@@ -102,17 +102,12 @@ public class AdminController : ControllerBase
     {
         try
         {
-            // Get DLQ depth
-            var dlqMetrics = await _supabaseClient.Rpc<PgmqMetrics>(
-                "pgmq.metrics",
-                new Dictionary<string, object>
-                {
-                    { "queue_name", DlqName }
-                });
+            // Get DLQ depth using get_email_queue_metrics wrapper function
+            var dlqMetrics = await _supabaseClient.Rpc<PgmqMetrics[]>("get_email_queue_metrics", new Dictionary<string, object>());
 
             return Ok(new
             {
-                dlq_depth = dlqMetrics?.QueueLength ?? 0,
+                dlq_depth = dlqMetrics?.FirstOrDefault()?.QueueLength ?? 0,
                 queue_name = DlqName
             });
         }
@@ -125,10 +120,14 @@ public class AdminController : ControllerBase
 
     private async Task<ReplayResult> ReplayDeadLetterMessageAsync(long dlqMessageId)
     {
-        // Read the message from DLQ (this makes it visible to us)
-        var dlqMessages = await _supabaseClient.Rpc<PgmqDlqMessage[]>(
-            "pgmq.read",
-            new { queue_name = DlqName, vt = 300, qty = 100 });
+        // Read the message from DLQ using pgmq_public read function
+        var readParameters = new Dictionary<string, object>
+        {
+            { "queue_name", DlqName },
+            { "sleep_seconds", 300 },
+            { "n", 100 }
+        };
+        var dlqMessages = await _supabaseClient.Rpc<PgmqDlqMessage[]>("read", readParameters);
 
         if (dlqMessages == null || dlqMessages.Length == 0)
         {
@@ -153,27 +152,34 @@ public class AdminController : ControllerBase
 
         try
         {
-            // Re-enqueue the message to the main queue
-            var sendResult = await _supabaseClient.Rpc<long?>(
-                "pgmq.send",
-                new { queue_name = QueueName, msg = dlqMessage.Message });
-
-            if (sendResult.HasValue)
+            // Re-enqueue the message to the main queue using pgmq_public.send via RPC
+            var sendParameters = new Dictionary<string, object>
             {
-                // Delete from DLQ
-                await _supabaseClient.Rpc(
-                    "pgmq.delete",
-                    new { queue_name = DlqName, msg_id = dlqMessageId });
+                { "queue_name", QueueName },
+                { "message", dlqMessage.Message },
+                { "sleep_seconds", 0 }
+            };
+            var sendResult = await _supabaseClient.Rpc<long[]>("send", sendParameters);
+            var newMsgId = sendResult?.FirstOrDefault();
+
+            if (newMsgId.HasValue)
+            {
+                // Delete from DLQ using delete_email_message wrapper
+                var deleteParameters = new Dictionary<string, object>
+                {
+                    { "p_msg_id", dlqMessageId }
+                };
+                await _supabaseClient.Rpc("delete_email_message", deleteParameters);
 
                 _logger.LogInformation(
                     "Replayed message {DlqMessageId} from DLQ to main queue as message {NewMessageId}",
                     dlqMessageId,
-                    sendResult.Value);
+                    newMsgId.Value);
 
                 return new ReplayResult
                 {
                     DeadLetterMessageId = dlqMessageId,
-                    NewQueueMessageId = sendResult.Value,
+                    NewQueueMessageId = newMsgId.Value,
                     Success = true
                 };
             }
@@ -220,7 +226,7 @@ public class PgmqDlqMessage
     public int ReadCount { get; set; }
     public DateTime EnqueuedAt { get; set; }
     public DateTime Vt { get; set; }
-    public required string Message { get; set; }
+    public required object Message { get; set; }
 }
 
 /// <summary>

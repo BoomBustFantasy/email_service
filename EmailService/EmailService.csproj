@@ -12,14 +12,11 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.6" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.6" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.6" />
-    <PackageReference Include="Quartz" Version="3.14.0" />
-    <PackageReference Include="Quartz.Extensions.DependencyInjection" Version="3.14.0" />
-    <PackageReference Include="Quartz.Extensions.Hosting" Version="3.14.0" />
     <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="sib_api_v3_sdk" Version="4.0.2" />
-    <PackageReference Include="Supabase" Version="1.1.1" />
+    <PackageReference Include="Supabase" Version="1.4.0" />
   </ItemGroup>
 
   <ItemGroup>

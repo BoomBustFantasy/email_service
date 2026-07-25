@@ -19,7 +19,7 @@ public class EmailOutbox : BaseModel
     public string RecipientEmail { get; set; } = string.Empty;
 
     [Column("template_variables")]
-    public string TemplateVariables { get; set; } = string.Empty;
+    public object? TemplateVariables { get; set; }
 
     [Column("classification")]
     public string Classification { get; set; } = "transactional";

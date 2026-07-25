@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
-using Quartz;
 using Supabase;
 using BoomBust.Logging;
 using EmailService;
@@ -21,7 +20,7 @@ builder.Host.UseBoomBustLogging(options =>
 {
     options.ApplicationName = "EmailService";
     options.LogFilePath = "logs/email-service-.txt";
-    options.OverrideToWarning = new[] { "Microsoft", "System", "Quartz" };
+    options.OverrideToWarning = new[] { "Microsoft", "System" };
 });
 
 // Configuration options
@@ -55,19 +54,6 @@ builder.Services.AddScoped<EmailService.Services.ReviewEmailFactory>();
 
 // Background services
 builder.Services.AddHostedService<QueueConsumerService>();
-
-// Quartz for legacy jobs (will be migrated to queue-based in future tickets)
-builder.Services.AddQuartz(q =>
-{
-    q.ScheduleJob<EmailService.Jobs.NotifyReviewerOfTeamReviewJob>(trigger => trigger
-        .WithIdentity("notifyReviewerOfTeamReviewTrigger", "emailJobs")
-        .StartNow()
-        .WithSimpleSchedule(x => x
-            .WithIntervalInMinutes(1)
-            .RepeatForever())
-    );
-});
-builder.Services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
 
 // Health checks
 builder.Services.AddHealthChecks()

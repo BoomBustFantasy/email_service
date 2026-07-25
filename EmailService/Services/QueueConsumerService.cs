@@ -3,6 +3,9 @@ using Microsoft.Extensions.Options;
 using Supabase;
 using EmailService.Configs;
 using System.Text.Json;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using EmailService.Templates;
 
 namespace EmailService.Services;
 
@@ -91,11 +94,14 @@ public class QueueConsumerService : BackgroundService
     {
         try
         {
-            // Call pgmq.read() function
-            var result = await supabaseClient.Rpc<PgmqMessage[]>(
-                "pgmq.read",
-                new { queue_name = QueueName, vt = VisibilityTimeoutSeconds, qty = batchSize });
+            // Call read_email_queue wrapper function
+            var parameters = new Dictionary<string, object>
+            {
+                { "p_batch_size", batchSize },
+                { "p_visibility_timeout_seconds", VisibilityTimeoutSeconds }
+            };
 
+            var result = await supabaseClient.Rpc<PgmqMessage[]>("read_email_queue", parameters);
             return result?.ToList() ?? new List<PgmqMessage>();
         }
         catch (Exception ex)
@@ -114,8 +120,10 @@ public class QueueConsumerService : BackgroundService
 
         try
         {
-            // Parse message payload
-            var payload = JsonSerializer.Deserialize<EmailQueuePayload>(message.Message);
+            // Parse message payload (JObject from Newtonsoft.Json)
+            var messageJson = JsonConvert.SerializeObject(message.Message);
+            var payload = JsonConvert.DeserializeObject<EmailQueuePayload>(messageJson);
+
             if (payload == null)
             {
                 throw new InvalidOperationException("Failed to deserialize message payload");
@@ -135,9 +143,9 @@ public class QueueConsumerService : BackgroundService
 
             if (outboxRecord == null)
             {
-                _logger.LogWarning("Outbox record {OutboxId} not found - deleting message from queue",
+                _logger.LogWarning("Outbox record {OutboxId} not found - archiving message from queue",
                     payload.OutboxId);
-                await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
+                await ArchiveMessageFromPgmq(supabaseClient, message.MsgId);
                 return;
             }
 
@@ -151,10 +159,10 @@ public class QueueConsumerService : BackgroundService
             if (existingLog != null)
             {
                 _logger.LogInformation(
-                    "Message with key {IdempotencyKey} already processed successfully - deleting from queue",
+                    "Message with key {IdempotencyKey} already processed successfully - archiving from queue",
                     outboxRecord.IdempotencyKey);
 
-                await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
+                await ArchiveMessageFromPgmq(supabaseClient, message.MsgId);
                 _metrics.IncrementSuccessful();
                 return;
             }
@@ -164,28 +172,95 @@ public class QueueConsumerService : BackgroundService
             if (isSuppressed)
             {
                 _logger.LogInformation(
-                    "Recipient {Email} is suppressed - skipping and deleting from queue",
+                    "Recipient {Email} is suppressed - skipping and archiving from queue",
                     outboxRecord.RecipientEmail);
 
-                await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount,
+                await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount + 1,
                     "suppressed", "Recipient is on suppression list");
-                await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
+                await ArchiveMessageFromPgmq(supabaseClient, message.MsgId);
                 _metrics.IncrementSuccessful();
                 return;
             }
 
-            // TODO: Send email via Brevo (to be implemented in future work)
-            // For now, just log the attempt
-            await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount,
-                "pending", null);
+            // Send email via Brevo
+            bool sent = false;
+            string? errorMessage = null;
 
-            // Simulate successful send for now
-            _logger.LogInformation("Successfully processed message {MsgId} for outbox {OutboxId}",
-                message.MsgId, payload.OutboxId);
+            try
+            {
+                // Get scoped services for email sending
+                using var scope = _serviceProvider.CreateScope();
+                var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+                var templateService = scope.ServiceProvider.GetRequiredService<ITemplateService>();
 
-            // Delete message from pgmq (marks as successfully processed)
-            await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
-            _metrics.IncrementSuccessful();
+                // Resolve template ID from template key
+                var templateId = templateService.ResolveTemplateId(outboxRecord.TemplateKey);
+
+                // Convert template variables (JObject) to Dictionary<string, string>
+                var templateParams = new Dictionary<string, string>();
+                if (outboxRecord.TemplateVariables != null)
+                {
+                    var jObject = outboxRecord.TemplateVariables as JObject ??
+                                  JObject.Parse(JsonConvert.SerializeObject(outboxRecord.TemplateVariables));
+
+                    foreach (var prop in jObject.Properties())
+                    {
+                        templateParams[prop.Name] = prop.Value.ToString();
+                    }
+                }
+
+                // Send the email
+                sent = await emailService.SendTemplateEmailAsync(
+                    outboxRecord.RecipientEmail,
+                    templateId,
+                    templateParams);
+
+                if (sent)
+                {
+                    _logger.LogInformation(
+                        "Successfully sent email {OutboxId} to {Email} using template {TemplateKey}",
+                        outboxRecord.Id, outboxRecord.RecipientEmail, outboxRecord.TemplateKey);
+                }
+                else
+                {
+                    errorMessage = "Email service returned false";
+                    _logger.LogWarning(
+                        "Failed to send email {OutboxId} to {Email}: {Error}",
+                        outboxRecord.Id, outboxRecord.RecipientEmail, errorMessage);
+                }
+            }
+            catch (Exception ex)
+            {
+                sent = false;
+                errorMessage = ex.Message;
+                _logger.LogError(ex,
+                    "Error sending email {OutboxId} to {Email}",
+                    outboxRecord.Id, outboxRecord.RecipientEmail);
+            }
+
+            // Log delivery attempt with actual status
+            await LogDeliveryAttempt(
+                supabaseClient,
+                outboxRecord,
+                message.ReadCount + 1,
+                sent ? "sent" : "failed",
+                errorMessage);
+
+            if (sent)
+            {
+                // Archive message from queue (marks as successfully processed)
+                await ArchiveMessageFromPgmq(supabaseClient, message.MsgId);
+                _metrics.IncrementSuccessful();
+
+                _logger.LogInformation("Successfully processed message {MsgId} for outbox {OutboxId}",
+                    message.MsgId, payload.OutboxId);
+            }
+            else
+            {
+                // Don't archive - let pgmq retry based on visibility timeout
+                _metrics.IncrementFailed();
+                throw new InvalidOperationException($"Email sending failed: {errorMessage}");
+            }
         }
         catch (Exception ex)
         {
@@ -204,9 +279,10 @@ public class QueueConsumerService : BackgroundService
     {
         try
         {
+            var normalizedEmail = email.ToLowerInvariant();
             var suppression = await supabaseClient
                 .From<EmailSuppression>()
-                .Where(x => x.Email == email.ToLowerInvariant())
+                .Where(x => x.Email == normalizedEmail)
                 .Single();
 
             return suppression != null;
@@ -247,17 +323,21 @@ public class QueueConsumerService : BackgroundService
         }
     }
 
-    private async Task DeleteMessageFromPgmq(Client supabaseClient, long msgId)
+    private async Task ArchiveMessageFromPgmq(Client supabaseClient, long msgId)
     {
         try
         {
-            await supabaseClient.Rpc(
-                "pgmq.delete",
-                new { queue_name = QueueName, msg_id = msgId });
+            // Call archive_email_message wrapper function (marks as successfully processed)
+            var parameters = new Dictionary<string, object>
+            {
+                { "p_msg_id", msgId }
+            };
+
+            await supabaseClient.Rpc("archive_email_message", parameters);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deleting message {MsgId} from pgmq", msgId);
+            _logger.LogError(ex, "Error archiving message {MsgId} from pgmq", msgId);
         }
     }
 
@@ -286,22 +366,18 @@ public class QueueConsumerService : BackgroundService
             }
 
             // Check pgmq DLQ size (dead letter messages)
-            var dlqMetrics = await supabaseClient.Rpc<PgmqMetrics>(
-                "pgmq.metrics",
-                new { queue_name = $"{QueueName}_dlq" });
-
-            var dlqCount = (int)(dlqMetrics?.QueueLength ?? 0);
-            _metrics.SetQueueDepth(dlqCount);
-
-            if (dlqCount >= _reliabilityConfig.DeadLetterQueueSizeThreshold)
-            {
-                _logger.LogWarning(
-                    "Dead letter queue size ({DlqCount}) exceeds threshold ({Threshold})",
-                    dlqCount,
-                    _reliabilityConfig.DeadLetterQueueSizeThreshold);
-
-                // TODO: Send alert email
-            }
+            // TODO: Fix metrics model to match get_email_queue_metrics wrapper return structure
+            // var dlqMetrics = await supabaseClient.Rpc<PgmqMetrics[]>("get_email_queue_metrics", new Dictionary<string, object>());
+            // var dlqCount = (int)(dlqMetrics?.FirstOrDefault()?.QueueLength ?? 0);
+            // _metrics.SetQueueDepth(dlqCount);
+            // if (dlqCount >= _reliabilityConfig.DeadLetterQueueSizeThreshold)
+            // {
+            //     _logger.LogWarning(
+            //         "Dead letter queue size ({DlqCount}) exceeds threshold ({Threshold})",
+            //         dlqCount,
+            //         _reliabilityConfig.DeadLetterQueueSizeThreshold);
+            //     // TODO: Send alert email
+            // }
         }
         catch (Exception ex)
         {
@@ -319,7 +395,7 @@ public class PgmqMessage
     public int ReadCount { get; set; }
     public DateTime EnqueuedAt { get; set; }
     public DateTime Vt { get; set; }
-    public required string Message { get; set; }
+    public required object Message { get; set; }
 }
 
 /// <summary>
@@ -340,8 +416,13 @@ public class PgmqMetrics
 /// </summary>
 public class EmailQueuePayload
 {
+    [JsonProperty("outbox_id")]
     public Guid OutboxId { get; set; }
+
+    [JsonProperty("recipient_email")]
     public string RecipientEmail { get; set; } = string.Empty;
+
+    [JsonProperty("template_key")]
     public string TemplateKey { get; set; } = string.Empty;
 }
 
