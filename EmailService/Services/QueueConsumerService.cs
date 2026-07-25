@@ -91,9 +91,9 @@ public class QueueConsumerService : BackgroundService
     {
         try
         {
-            // Call pgmq.read_batch() function
+            // Call pgmq.read() function
             var result = await supabaseClient.Rpc<PgmqMessage[]>(
-                "pgmq.read_batch",
+                "pgmq.read",
                 new Dictionary<string, object>
                 {
                     { "queue_name", QueueName },
@@ -295,14 +295,14 @@ public class QueueConsumerService : BackgroundService
             }
 
             // Check pgmq DLQ size (dead letter messages)
-            var dlqResult = await supabaseClient.Rpc<int?>(
-                "pgmq.queue_depth",
+            var dlqMetrics = await supabaseClient.Rpc<PgmqMetrics>(
+                "pgmq.metrics",
                 new Dictionary<string, object>
                 {
                     { "queue_name", $"{QueueName}_dlq" }
                 });
 
-            var dlqCount = dlqResult ?? 0;
+            var dlqCount = (int)(dlqMetrics?.QueueLength ?? 0);
             _metrics.SetQueueDepth(dlqCount);
 
             if (dlqCount >= _reliabilityConfig.DeadLetterQueueSizeThreshold)
@@ -332,6 +332,19 @@ public class PgmqMessage
     public DateTime EnqueuedAt { get; set; }
     public DateTime Vt { get; set; }
     public required string Message { get; set; }
+}
+
+/// <summary>
+/// Represents pgmq queue metrics
+/// </summary>
+public class PgmqMetrics
+{
+    public string QueueName { get; set; } = string.Empty;
+    public long QueueLength { get; set; }
+    public int? NewestMsgAgeSec { get; set; }
+    public int? OldestMsgAgeSec { get; set; }
+    public long TotalMessages { get; set; }
+    public DateTime ScrapeTime { get; set; }
 }
 
 /// <summary>

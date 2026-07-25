@@ -103,8 +103,8 @@ public class AdminController : ControllerBase
         try
         {
             // Get DLQ depth
-            var dlqDepth = await _supabaseClient.Rpc<int?>(
-                "pgmq.queue_depth",
+            var dlqMetrics = await _supabaseClient.Rpc<PgmqMetrics>(
+                "pgmq.metrics",
                 new Dictionary<string, object>
                 {
                     { "queue_name", DlqName }
@@ -112,7 +112,7 @@ public class AdminController : ControllerBase
             
             return Ok(new
             {
-                dlq_depth = dlqDepth ?? 0,
+                dlq_depth = dlqMetrics?.QueueLength ?? 0,
                 queue_name = DlqName
             });
         }
@@ -234,4 +234,17 @@ public class PgmqDlqMessage
     public DateTime EnqueuedAt { get; set; }
     public DateTime Vt { get; set; }
     public required string Message { get; set; }
+}
+
+/// <summary>
+/// Represents pgmq queue metrics
+/// </summary>
+public class PgmqMetrics
+{
+    public string QueueName { get; set; } = string.Empty;
+    public long QueueLength { get; set; }
+    public int? NewestMsgAgeSec { get; set; }
+    public int? OldestMsgAgeSec { get; set; }
+    public long TotalMessages { get; set; }
+    public DateTime ScrapeTime { get; set; }
 }
