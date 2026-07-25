@@ -13,19 +13,19 @@ public class EmailSuppression : BaseModel
     [PrimaryKey("id", false)]
     [JsonPropertyName("id")]
     public Guid Id { get; set; }
-    
+
     [Column("email")]
     [JsonPropertyName("email")]
     public string Email { get; set; } = string.Empty;
-    
+
     [Column("reason")]
     [JsonPropertyName("reason")]
     public string Reason { get; set; } = string.Empty;
-    
+
     [Column("suppression_type")]
     [JsonPropertyName("suppression_type")]
     public string SuppressionType { get; set; } = "all";
-    
+
     [Column("created_at")]
     [JsonPropertyName("created_at")]
     public DateTime CreatedAt { get; set; }

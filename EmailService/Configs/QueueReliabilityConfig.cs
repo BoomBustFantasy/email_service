@@ -9,32 +9,32 @@ public class QueueReliabilityConfig
     /// Maximum number of retry attempts before moving to dead letter queue
     /// </summary>
     public int MaxRetryAttempts { get; set; } = 3;
-    
+
     /// <summary>
     /// Base delay in milliseconds for exponential backoff (first retry)
     /// </summary>
     public int BaseBackoffMs { get; set; } = 1000;
-    
+
     /// <summary>
     /// Exponential backoff multiplier (2.0 = double the delay each retry)
     /// </summary>
     public double BackoffMultiplier { get; set; } = 2.0;
-    
+
     /// <summary>
     /// Maximum backoff delay in milliseconds
     /// </summary>
     public int MaxBackoffMs { get; set; } = 60000;
-    
+
     /// <summary>
     /// Email address to send operational alerts (dead letter, degradation)
     /// </summary>
     public string? OperationalAlertEmail { get; set; }
-    
+
     /// <summary>
     /// Threshold for success rate degradation alert (0-1, e.g., 0.8 = 80%)
     /// </summary>
     public double SuccessRateDegradationThreshold { get; set; } = 0.8;
-    
+
     /// <summary>
     /// Threshold for dead letter queue size alert
     /// </summary>

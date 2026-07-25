@@ -20,7 +20,7 @@ public class BrevoEmailService : IEmailService
     private readonly ILogger<BrevoEmailService> _logger;
 
     public BrevoEmailService(
-        IHttpClientFactory httpClientFactory, 
+        IHttpClientFactory httpClientFactory,
         IOptions<BrevoConfig> config,
         ITemplateService templateService,
         ILogger<BrevoEmailService> logger)
@@ -113,22 +113,22 @@ public class BrevoEmailService : IEmailService
         {
             // Validate the contract
             _templateService.ValidateContract(contract);
-            
+
             // Resolve template ID from internal key
             var templateId = _templateService.ResolveTemplateId(contract.TemplateKey);
-            
+
             // Get sender identity (uses override or default)
             var sender = _templateService.GetSenderIdentity(contract);
-            
+
             // Convert contract to Brevo params
             var templateParams = contract.ToBrevoParams();
-            
+
             // Extract recipient email from params (assumes recipient_email or similar)
             if (!templateParams.TryGetValue("recipient_name", out var recipientName))
             {
                 throw new ArgumentException("Template contract must provide recipient_name in params");
             }
-            
+
             // Get recipient email from contract
             var recipientEmail = contract switch
             {
@@ -137,11 +137,11 @@ public class BrevoEmailService : IEmailService
                 Templates.Contracts.PurchaseConfirmationContract purchase => purchase.RecipientEmail,
                 _ => throw new NotSupportedException($"Unsupported contract type: {contract.GetType().Name}")
             };
-            
+
             _logger.LogInformation(
                 "Sending template email: Key={TemplateKey}, ID={TemplateId}, To={Recipient}, Sender={SenderName}",
                 contract.TemplateKey, templateId, recipientEmail, sender.Name);
-            
+
             // Call Brevo API
             var client = _httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.Clear();

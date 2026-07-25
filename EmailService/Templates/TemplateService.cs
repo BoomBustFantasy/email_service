@@ -14,14 +14,14 @@ public interface ITemplateService
     /// <returns>Brevo template ID</returns>
     /// <exception cref="KeyNotFoundException">Thrown when template key is not configured</exception>
     long ResolveTemplateId(string templateKey);
-    
+
     /// <summary>
     /// Gets the sender identity for a template, applying overrides if provided
     /// </summary>
     /// <param name="contract">Template contract that may contain a sender override</param>
     /// <returns>Sender identity to use</returns>
     SenderIdentity GetSenderIdentity(ITemplateContract contract);
-    
+
     /// <summary>
     /// Validates a template contract
     /// </summary>
@@ -33,30 +33,30 @@ public interface ITemplateService
 public class TemplateService : ITemplateService
 {
     private readonly TemplateConfig _config;
-    
+
     public TemplateService(IOptions<TemplateConfig> config)
     {
         _config = config.Value;
     }
-    
+
     public long ResolveTemplateId(string templateKey)
     {
         if (string.IsNullOrWhiteSpace(templateKey))
             throw new ArgumentException("Template key cannot be null or empty", nameof(templateKey));
-        
+
         if (!_config.TemplateIdMap.TryGetValue(templateKey, out var templateId))
         {
             throw new KeyNotFoundException($"Template key '{templateKey}' is not configured in TemplateIdMap");
         }
-        
+
         return templateId;
     }
-    
+
     public SenderIdentity GetSenderIdentity(ITemplateContract contract)
     {
         return contract.SenderOverride ?? _config.DefaultSender;
     }
-    
+
     public void ValidateContract(ITemplateContract contract)
     {
         if (!contract.Validate(out var errors))

@@ -18,14 +18,14 @@ public class QueueProcessingBehaviorTests
         // Arrange
         var baseBackoffMs = 1000;
         var backoffMultiplier = 2.0;
-        
+
         // Act
         var calculatedDelay = (int)(baseBackoffMs * Math.Pow(backoffMultiplier, retryCount));
-        
+
         // Assert
         calculatedDelay.Should().Be(expectedDelayMs);
     }
-    
+
     [Fact]
     public void ExponentialBackoff_NeverExceedsMaximum()
     {
@@ -34,16 +34,16 @@ public class QueueProcessingBehaviorTests
         var backoffMultiplier = 2.0;
         var maxBackoffMs = 60000; // 60 seconds
         var veryHighRetryCount = 10;
-        
+
         // Act
         var calculatedDelay = (int)(baseBackoffMs * Math.Pow(backoffMultiplier, veryHighRetryCount));
         var cappedDelay = Math.Min(calculatedDelay, maxBackoffMs);
-        
+
         // Assert
         cappedDelay.Should().Be(maxBackoffMs);
         cappedDelay.Should().BeLessThanOrEqualTo(maxBackoffMs);
     }
-    
+
     [Theory]
     [InlineData(0, false)]  // Initial attempt
     [InlineData(1, false)]  // First retry
@@ -54,34 +54,34 @@ public class QueueProcessingBehaviorTests
     {
         // Arrange
         var maxRetryAttempts = 3;
-        
+
         // Act
         var result = attemptCount >= maxRetryAttempts;
-        
+
         // Assert
         result.Should().Be(shouldDeadLetter);
     }
-    
+
     [Fact]
     public void QueueMessage_IdempotencyKey_MustBeUnique()
     {
         // Arrange
         var idempotencyKey1 = Guid.NewGuid().ToString();
         var idempotencyKey2 = Guid.NewGuid().ToString();
-        
+
         // Assert
         idempotencyKey1.Should().NotBe(idempotencyKey2);
         idempotencyKey1.Should().NotBeNullOrWhiteSpace();
         idempotencyKey2.Should().NotBeNullOrWhiteSpace();
     }
-    
+
     [Fact]
     public void ReplayIdempotencyKey_IncludesDeadLetterMessageId()
     {
         // Arrange
         var deadLetterMessageId = 123L;
         var replayKey = $"{Guid.NewGuid()}-replay-{deadLetterMessageId}";
-        
+
         // Assert
         replayKey.Should().EndWith($"-replay-{deadLetterMessageId}");
         replayKey.Should().Contain("replay");
@@ -109,7 +109,7 @@ public class WebhookEventMappingTests
         expectedStatus.Should().NotBeNullOrWhiteSpace();
         brevoEvent.Should().NotBeNullOrWhiteSpace();
     }
-    
+
     [Theory]
     [InlineData("hard_bounce", true)]
     [InlineData("soft_bounce", true)]
@@ -143,14 +143,14 @@ public class ReplayBehaviorTests
         // Arrange
         var minBatchSize = 1;
         var maxBatchSize = 100;
-        
+
         // Act
         var result = batchSize >= minBatchSize && batchSize <= maxBatchSize;
-        
+
         // Assert
         result.Should().Be(isValid);
     }
-    
+
     [Fact]
     public void ReplayStrategy_DescribesOriginalResetBehavior()
     {
@@ -160,16 +160,16 @@ public class ReplayBehaviorTests
         // - LockedUntil → null
         // - LastError → null
         // - Preserve original idempotency_key
-        
+
         var originalStatus = "dead_lettered";
         var afterReplayStatus = "pending";
         var afterReplayRetryCount = 0;
-        
+
         afterReplayStatus.Should().Be("pending");
         afterReplayRetryCount.Should().Be(0);
         originalStatus.Should().NotBe(afterReplayStatus);
     }
-    
+
     [Fact]
     public void ReplayStrategy_DescribesNewMessageCreation()
     {
@@ -179,10 +179,10 @@ public class ReplayBehaviorTests
         // - Generate new idempotency_key: {guid}-replay-{dlqId}
         // - Status → "pending"
         // - RetryCount → 0
-        
+
         var dlqId = 456L;
         var newIdempotencyKey = $"{Guid.NewGuid()}-replay-{dlqId}";
-        
+
         newIdempotencyKey.Should().EndWith($"-replay-{dlqId}");
     }
 }
@@ -205,14 +205,14 @@ public class TemplateValidationBehaviorTests
     {
         // This test documents expected email validation patterns
         // Actual validation uses System.ComponentModel.DataAnnotations.EmailAddressAttribute
-        
+
         if (isValid)
         {
             email.Should().Contain("@");
             email.Should().Contain(".");
         }
     }
-    
+
     [Theory]
     [InlineData("https://example.com", true)]
     [InlineData("https://example.com/path", true)]
@@ -224,7 +224,7 @@ public class TemplateValidationBehaviorTests
     {
         // This test documents expected URL validation patterns
         // URLs must be http or https scheme
-        
+
         if (isValid)
         {
             (url.StartsWith("http://") || url.StartsWith("https://"))
@@ -247,38 +247,38 @@ public class MetricsBehaviorTests
     public void SuccessRate_CalculatesCorrectly(int totalProcessed, int successful, double expectedRate)
     {
         // Arrange & Act
-        var successRate = totalProcessed > 0 
-            ? (double)successful / totalProcessed 
+        var successRate = totalProcessed > 0
+            ? (double)successful / totalProcessed
             : 0.0;
-        
+
         // Assert
         successRate.Should().Be(expectedRate);
     }
-    
+
     [Fact]
     public void OperationalAlert_TriggersOnDegradedSuccessRate()
     {
         // Arrange
         var successRateDegradationThreshold = 0.8; // 80%
         var currentSuccessRate = 0.75; // 75%
-        
+
         // Act
         var shouldAlert = currentSuccessRate < successRateDegradationThreshold;
-        
+
         // Assert
         shouldAlert.Should().BeTrue();
     }
-    
+
     [Fact]
     public void OperationalAlert_TriggersOnLargeDLQSize()
     {
         // Arrange
         var deadLetterQueueSizeThreshold = 10;
         var currentDLQSize = 15;
-        
+
         // Act
         var shouldAlert = currentDLQSize >= deadLetterQueueSizeThreshold;
-        
+
         // Assert
         shouldAlert.Should().BeTrue();
     }

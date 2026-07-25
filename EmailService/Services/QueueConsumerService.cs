@@ -22,7 +22,7 @@ public class QueueConsumerService : BackgroundService
     private const int MessageBatchSize = 10;
     private const int VisibilityTimeoutSeconds = 300; // 5 minutes
     private const string QueueName = "email_outbound";
-    
+
     public QueueMetrics Metrics => _metrics;
 
     public QueueConsumerService(
@@ -67,7 +67,7 @@ public class QueueConsumerService : BackgroundService
 
         // Read batch of messages from pgmq
         var messages = await ReadMessagesFromPgmq(supabaseClient, MessageBatchSize);
-        
+
         _metrics.SetQueueDepth(messages.Count);
 
         if (messages.Count == 0)
@@ -75,14 +75,14 @@ public class QueueConsumerService : BackgroundService
             return;
         }
 
-        _logger.LogInformation("Processing {Count} messages from pgmq queue '{QueueName}'", 
+        _logger.LogInformation("Processing {Count} messages from pgmq queue '{QueueName}'",
             messages.Count, QueueName);
 
         foreach (var message in messages)
         {
             await ProcessMessageAsync(message, supabaseClient, cancellationToken);
         }
-        
+
         // Check operational metrics
         await CheckOperationalAlertsAsync(supabaseClient, cancellationToken);
     }
@@ -94,12 +94,7 @@ public class QueueConsumerService : BackgroundService
             // Call pgmq.read() function
             var result = await supabaseClient.Rpc<PgmqMessage[]>(
                 "pgmq.read",
-                new Dictionary<string, object>
-                {
-                    { "queue_name", QueueName },
-                    { "vt", VisibilityTimeoutSeconds },
-                    { "qty", batchSize }
-                });
+                new { queue_name = QueueName, vt = VisibilityTimeoutSeconds, qty = batchSize });
 
             return result?.ToList() ?? new List<PgmqMessage>();
         }
@@ -116,7 +111,7 @@ public class QueueConsumerService : BackgroundService
         CancellationToken cancellationToken)
     {
         _metrics.IncrementProcessed();
-        
+
         try
         {
             // Parse message payload
@@ -140,7 +135,7 @@ public class QueueConsumerService : BackgroundService
 
             if (outboxRecord == null)
             {
-                _logger.LogWarning("Outbox record {OutboxId} not found - deleting message from queue", 
+                _logger.LogWarning("Outbox record {OutboxId} not found - deleting message from queue",
                     payload.OutboxId);
                 await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
                 return;
@@ -172,7 +167,7 @@ public class QueueConsumerService : BackgroundService
                     "Recipient {Email} is suppressed - skipping and deleting from queue",
                     outboxRecord.RecipientEmail);
 
-                await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount, 
+                await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount,
                     "suppressed", "Recipient is on suppression list");
                 await DeleteMessageFromPgmq(supabaseClient, message.MsgId);
                 _metrics.IncrementSuccessful();
@@ -181,7 +176,7 @@ public class QueueConsumerService : BackgroundService
 
             // TODO: Send email via Brevo (to be implemented in future work)
             // For now, just log the attempt
-            await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount, 
+            await LogDeliveryAttempt(supabaseClient, outboxRecord, message.ReadCount,
                 "pending", null);
 
             // Simulate successful send for now
@@ -196,7 +191,7 @@ public class QueueConsumerService : BackgroundService
         {
             _logger.LogError(ex, "Error processing message {MsgId}", message.MsgId);
             _metrics.IncrementFailed();
-            
+
             // pgmq will automatically retry based on visibility timeout
             // After max retries, pgmq will move to DLQ automatically
             _logger.LogWarning(
@@ -258,11 +253,7 @@ public class QueueConsumerService : BackgroundService
         {
             await supabaseClient.Rpc(
                 "pgmq.delete",
-                new Dictionary<string, object>
-                {
-                    { "queue_name", QueueName },
-                    { "msg_id", msgId }
-                });
+                new { queue_name = QueueName, msg_id = msgId });
         }
         catch (Exception ex)
         {
@@ -283,24 +274,21 @@ public class QueueConsumerService : BackgroundService
         try
         {
             // Check success rate degradation
-            if (_metrics.TotalProcessed > 20 && 
+            if (_metrics.TotalProcessed > 20 &&
                 _metrics.SuccessRate < _reliabilityConfig.SuccessRateDegradationThreshold)
             {
                 _logger.LogWarning(
                     "Success rate degradation detected: {SuccessRate:P2} below threshold {Threshold:P2}",
                     _metrics.SuccessRate,
                     _reliabilityConfig.SuccessRateDegradationThreshold);
-                
+
                 // TODO: Send alert email (will be implemented when email sending is wired up)
             }
 
             // Check pgmq DLQ size (dead letter messages)
             var dlqMetrics = await supabaseClient.Rpc<PgmqMetrics>(
                 "pgmq.metrics",
-                new Dictionary<string, object>
-                {
-                    { "queue_name", $"{QueueName}_dlq" }
-                });
+                new { queue_name = $"{QueueName}_dlq" });
 
             var dlqCount = (int)(dlqMetrics?.QueueLength ?? 0);
             _metrics.SetQueueDepth(dlqCount);
@@ -311,7 +299,7 @@ public class QueueConsumerService : BackgroundService
                     "Dead letter queue size ({DlqCount}) exceeds threshold ({Threshold})",
                     dlqCount,
                     _reliabilityConfig.DeadLetterQueueSizeThreshold);
-                
+
                 // TODO: Send alert email
             }
         }

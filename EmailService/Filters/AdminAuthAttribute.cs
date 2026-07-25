@@ -22,13 +22,13 @@ public class AdminAuthFilter : IAuthorizationFilter
 {
     private readonly AppConfig _appConfig;
     private readonly ILogger<AdminAuthFilter> _logger;
-    
+
     public AdminAuthFilter(IOptions<AppConfig> appConfig, ILogger<AdminAuthFilter> logger)
     {
         _appConfig = appConfig.Value;
         _logger = logger;
     }
-    
+
     public void OnAuthorization(AuthorizationFilterContext context)
     {
         // Get the admin API key from header
@@ -38,7 +38,7 @@ public class AdminAuthFilter : IAuthorizationFilter
             context.Result = new UnauthorizedObjectResult(new { error = "Admin API key required" });
             return;
         }
-        
+
         // Validate the key
         if (string.IsNullOrWhiteSpace(_appConfig.AdminApiKey))
         {
@@ -46,14 +46,14 @@ public class AdminAuthFilter : IAuthorizationFilter
             context.Result = new StatusCodeResult(500);
             return;
         }
-        
+
         if (providedKey != _appConfig.AdminApiKey)
         {
             _logger.LogWarning("Admin API access denied - invalid key");
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid admin API key" });
             return;
         }
-        
+
         _logger.LogDebug("Admin API access granted");
     }
 }

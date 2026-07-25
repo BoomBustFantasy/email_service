@@ -17,7 +17,7 @@ public class AdminController : ControllerBase
     private readonly Client _supabaseClient;
     private const string QueueName = "email_outbound";
     private const string DlqName = "email_outbound_dlq";
-    
+
     public AdminController(
         ILogger<AdminController> logger,
         Client supabaseClient)
@@ -25,7 +25,7 @@ public class AdminController : ControllerBase
         _logger = logger;
         _supabaseClient = supabaseClient;
     }
-    
+
     /// <summary>
     /// Replay dead letter messages back to the main queue
     /// </summary>
@@ -41,16 +41,16 @@ public class AdminController : ControllerBase
             {
                 return BadRequest(new { error = "No message IDs provided" });
             }
-            
+
             if (messageIds.Count > 100)
             {
                 return BadRequest(new { error = "Maximum batch size is 100 messages" });
             }
-            
+
             _logger.LogInformation("Replaying {Count} dead letter messages from pgmq", messageIds.Count);
-            
+
             var results = new List<ReplayResult>();
-            
+
             foreach (var messageId in messageIds)
             {
                 try
@@ -69,15 +69,15 @@ public class AdminController : ControllerBase
                     });
                 }
             }
-            
+
             var successCount = results.Count(r => r.Success);
             var failCount = results.Count(r => !r.Success);
-            
+
             _logger.LogInformation(
                 "Replay complete: {SuccessCount} succeeded, {FailCount} failed",
                 successCount,
                 failCount);
-            
+
             return Ok(new
             {
                 total = results.Count,
@@ -92,7 +92,7 @@ public class AdminController : ControllerBase
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
-    
+
     /// <summary>
     /// Get dead letter queue statistics
     /// </summary>
@@ -109,7 +109,7 @@ public class AdminController : ControllerBase
                 {
                     { "queue_name", DlqName }
                 });
-            
+
             return Ok(new
             {
                 dlq_depth = dlqMetrics?.QueueLength ?? 0,
@@ -122,18 +122,13 @@ public class AdminController : ControllerBase
             return StatusCode(500, new { error = "Internal server error" });
         }
     }
-    
+
     private async Task<ReplayResult> ReplayDeadLetterMessageAsync(long dlqMessageId)
     {
         // Read the message from DLQ (this makes it visible to us)
         var dlqMessages = await _supabaseClient.Rpc<PgmqDlqMessage[]>(
             "pgmq.read",
-            new Dictionary<string, object>
-            {
-                { "queue_name", DlqName },
-                { "vt", 300 }, // 5 minute visibility timeout
-                { "qty", 100 }
-            });
+            new { queue_name = DlqName, vt = 300, qty = 100 });
 
         if (dlqMessages == null || dlqMessages.Length == 0)
         {
@@ -161,22 +156,14 @@ public class AdminController : ControllerBase
             // Re-enqueue the message to the main queue
             var sendResult = await _supabaseClient.Rpc<long?>(
                 "pgmq.send",
-                new Dictionary<string, object>
-                {
-                    { "queue_name", QueueName },
-                    { "msg", dlqMessage.Message }
-                });
+                new { queue_name = QueueName, msg = dlqMessage.Message });
 
             if (sendResult.HasValue)
             {
                 // Delete from DLQ
                 await _supabaseClient.Rpc(
                     "pgmq.delete",
-                    new Dictionary<string, object>
-                    {
-                        { "queue_name", DlqName },
-                        { "msg_id", dlqMessageId }
-                    });
+                    new { queue_name = DlqName, msg_id = dlqMessageId });
 
                 _logger.LogInformation(
                     "Replayed message {DlqMessageId} from DLQ to main queue as message {NewMessageId}",

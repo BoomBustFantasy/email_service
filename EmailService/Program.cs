@@ -99,7 +99,7 @@ app.MapGet("/", () => new
 });
 
 // Queue metrics endpoint
-app.MapGet("/metrics", (EmailService.Services.QueueMetrics metrics) => 
+app.MapGet("/metrics", (EmailService.Services.QueueMetrics metrics) =>
 {
     return Results.Ok(new
     {

@@ -15,7 +15,7 @@ namespace EmailService.Services
         /// <param name="templateId">Brevo template ID</param>
         /// <param name="templateParams">Key-value pairs to substitute in the template</param>
         Task<bool> SendTemplateEmailAsync(string to, long templateId, Dictionary<string, string>? templateParams = null);
-        
+
         /// <summary>
         /// Send an email using a template contract with validation and automatic ID resolution
         /// </summary>
