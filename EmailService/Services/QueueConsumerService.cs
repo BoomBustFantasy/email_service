@@ -149,6 +149,25 @@ public class QueueConsumerService : BackgroundService
                 return;
             }
 
+            // Drop stale mail. A notification that arrives days after the event it
+            // describes is worse than silence, and a consumer outage produces a
+            // backlog of exactly that.
+            if (IsStale(outboxRecord.CreatedAt, _reliabilityConfig.MaxMessageAgeHours, out var age))
+            {
+                var staleReason =
+                    $"Message is {age.TotalHours:F1}h old, older than the " +
+                    $"{_reliabilityConfig.MaxMessageAgeHours}h limit";
+
+                _logger.LogWarning(
+                    "Dropping stale message {MsgId} for outbox {OutboxId}: {Reason}",
+                    message.MsgId, outboxRecord.Id, staleReason);
+
+                await LogDeliveryAttempt(
+                    supabaseClient, outboxRecord, message.ReadCount + 1, "stale", staleReason);
+                await ArchiveMessageFromPgmq(supabaseClient, message.MsgId);
+                return;
+            }
+
             // Check idempotency - has this already been processed successfully?
             var existingLog = await supabaseClient
                 .From<EmailDeliveryLog>()
@@ -296,12 +315,80 @@ public class QueueConsumerService : BackgroundService
             _logger.LogError(ex, "Error processing message {MsgId}", message.MsgId);
             _metrics.IncrementFailed();
 
-            // pgmq will automatically retry based on visibility timeout
-            // After max retries, pgmq will move to DLQ automatically
+            // pgmq redelivers on visibility timeout but never gives up on its own —
+            // an earlier comment here claimed it dead-letters automatically, and one
+            // message was retried 217 times before anyone noticed. Give up explicitly.
+            if (HasExhaustedRetries(message.ReadCount, _reliabilityConfig.MaxRetryAttempts))
+            {
+                await DeadLetterMessageAsync(supabaseClient, message, ex.Message);
+                return;
+            }
+
             _logger.LogWarning(
-                "Message {MsgId} failed (read count: {ReadCount}) - will be retried by pgmq",
-                message.MsgId, message.ReadCount);
+                "Message {MsgId} failed (attempt {Attempt} of {Max}) - pgmq will redeliver",
+                message.MsgId, message.ReadCount, _reliabilityConfig.MaxRetryAttempts);
         }
+    }
+
+    /// <summary>
+    /// pgmq's read_ct counts deliveries, so it is already 1 on the first attempt.
+    /// </summary>
+    public static bool HasExhaustedRetries(int readCount, int maxRetryAttempts) =>
+        maxRetryAttempts > 0 && readCount >= maxRetryAttempts;
+
+    /// <summary>
+    /// Moves a message that has run out of attempts onto the dead-letter queue,
+    /// where the replay API can find it, and alerts if configured.
+    /// </summary>
+    private async Task DeadLetterMessageAsync(Client supabaseClient, PgmqMessage message, string reason)
+    {
+        try
+        {
+            await supabaseClient.Rpc("dead_letter_email_message", new Dictionary<string, object>
+            {
+                { "p_msg_id", message.MsgId },
+                { "p_reason", reason }
+            });
+
+            _metrics.IncrementDeadLettered();
+
+            _logger.LogError(
+                "Message {MsgId} dead-lettered after {ReadCount} attempts: {Reason}",
+                message.MsgId, message.ReadCount, reason);
+
+            await SendOperationalAlertAsync(
+                "Email message dead-lettered",
+                $"Message {message.MsgId} failed {message.ReadCount} times and was moved to " +
+                $"email_outbound_dlq.{Environment.NewLine}{Environment.NewLine}Last error: {reason}");
+        }
+        catch (Exception ex)
+        {
+            // Leave it on the main queue rather than losing it; it will be retried
+            // and dead-lettered again on the next pass.
+            _logger.LogError(ex, "Failed to dead-letter message {MsgId}", message.MsgId);
+        }
+    }
+
+    /// <summary>
+    /// True when a message is older than the configured limit. A null creation
+    /// timestamp is treated as fresh — dropping mail because a timestamp is
+    /// missing would be worse than sending it.
+    /// </summary>
+    public static bool IsStale(DateTime? createdAt, int maxAgeHours, out TimeSpan age)
+    {
+        age = TimeSpan.Zero;
+
+        if (createdAt is null || maxAgeHours <= 0)
+        {
+            return false;
+        }
+
+        var created = createdAt.Value.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(createdAt.Value, DateTimeKind.Utc)
+            : createdAt.Value.ToUniversalTime();
+
+        age = DateTime.UtcNow - created;
+        return age > TimeSpan.FromHours(maxAgeHours);
     }
 
     /// <summary>
@@ -420,26 +507,72 @@ public class QueueConsumerService : BackgroundService
                     _metrics.SuccessRate,
                     _reliabilityConfig.SuccessRateDegradationThreshold);
 
-                // TODO: Send alert email (will be implemented when email sending is wired up)
+                await SendOperationalAlertAsync(
+                    "Email success rate degraded",
+                    $"Success rate is {_metrics.SuccessRate:P2}, below the " +
+                    $"{_reliabilityConfig.SuccessRateDegradationThreshold:P2} threshold, " +
+                    $"across {_metrics.TotalProcessed} processed messages.");
             }
 
-            // Check pgmq DLQ size (dead letter messages)
-            // TODO: Fix metrics model to match get_email_queue_metrics wrapper return structure
-            // var dlqMetrics = await supabaseClient.Rpc<PgmqMetrics[]>("get_email_queue_metrics", new Dictionary<string, object>());
-            // var dlqCount = (int)(dlqMetrics?.FirstOrDefault()?.QueueLength ?? 0);
-            // _metrics.SetQueueDepth(dlqCount);
-            // if (dlqCount >= _reliabilityConfig.DeadLetterQueueSizeThreshold)
-            // {
-            //     _logger.LogWarning(
-            //         "Dead letter queue size ({DlqCount}) exceeds threshold ({Threshold})",
-            //         dlqCount,
-            //         _reliabilityConfig.DeadLetterQueueSizeThreshold);
-            //     // TODO: Send alert email
-            // }
+            // Alert when dead-lettered mail is piling up unattended.
+            var dlqDepth = await GetDeadLetterDepthAsync(supabaseClient);
+            if (dlqDepth >= _reliabilityConfig.DeadLetterQueueSizeThreshold)
+            {
+                _logger.LogWarning(
+                    "Dead letter queue size ({DlqCount}) exceeds threshold ({Threshold})",
+                    dlqDepth, _reliabilityConfig.DeadLetterQueueSizeThreshold);
+
+                await SendOperationalAlertAsync(
+                    "Email dead-letter queue is backing up",
+                    $"email_outbound_dlq holds {dlqDepth} messages, at or above the " +
+                    $"{_reliabilityConfig.DeadLetterQueueSizeThreshold} alert threshold. " +
+                    "Use the admin replay endpoint once the cause is fixed.");
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error checking operational alerts");
+        }
+    }
+
+    private async Task<int> GetDeadLetterDepthAsync(Client supabaseClient)
+    {
+        try
+        {
+            var depth = await supabaseClient.Rpc<int>("get_email_dlq_depth", new Dictionary<string, object>());
+            _metrics.SetDeadLetterDepth(depth);
+            return depth;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading dead letter queue depth");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Sends an operational alert to the configured address. Alerts go straight
+    /// through Brevo rather than the outbox — a queue that is already failing
+    /// cannot be trusted to deliver the notice that it is failing.
+    /// </summary>
+    private async Task SendOperationalAlertAsync(string subject, string body)
+    {
+        var alertEmail = _reliabilityConfig.OperationalAlertEmail;
+        if (string.IsNullOrWhiteSpace(alertEmail))
+        {
+            return;
+        }
+
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+
+            await emailService.SendEmailAsync(alertEmail, $"[EmailService] {subject}", body);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send operational alert '{Subject}'", subject);
         }
     }
 }

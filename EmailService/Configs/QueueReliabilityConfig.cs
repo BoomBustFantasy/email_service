@@ -39,4 +39,12 @@ public class QueueReliabilityConfig
     /// Threshold for dead letter queue size alert
     /// </summary>
     public int DeadLetterQueueSizeThreshold { get; set; } = 10;
+
+    /// <summary>
+    /// Messages older than this are dropped instead of sent. A consumer outage
+    /// leaves a backlog of notifications that are no longer useful — in August
+    /// 2026 the queue held trade-review-complete mail up to 18 days stale — and
+    /// delivering them late is worse than not delivering them.
+    /// </summary>
+    public int MaxMessageAgeHours { get; set; } = 48;
 }
