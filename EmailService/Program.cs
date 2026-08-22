@@ -66,6 +66,12 @@ builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();
 
+// Refuse to start on incomplete template wiring rather than discovering it one
+// dropped or endlessly-retried message at a time.
+EmailService.Templates.TemplateConfigurationValidator.Validate(
+    app.Services.GetRequiredService<EmailService.Templates.ITemplateContractRegistry>(),
+    app.Services.GetRequiredService<IOptions<EmailService.Templates.TemplateConfig>>().Value);
+
 // Initialize Supabase
 var supabaseClient = app.Services.GetRequiredService<Client>();
 await supabaseClient.InitializeAsync();

@@ -15,7 +15,7 @@ public class TemplateContractRegistryTests
         ["trade_url"] = "https://boombustfantasy.com/trades/1",
         ["review_id"] = "1",
         ["review_url"] = "https://boombustfantasy.com/team-reviews/1",
-        ["purchase_type"] = "credits",
+        ["product_type"] = "credits",
         ["credits_amount"] = "10",
         ["recipient_name"] = "Jack"
     };
@@ -24,7 +24,6 @@ public class TemplateContractRegistryTests
     [InlineData("stripe_purchase_confirmation")]
     [InlineData("trade_review_completed")]
     [InlineData("team_review_ready")]
-    [InlineData("reviewer_trade_assigned")]
     [InlineData("reviewer_team_assigned")]
     public void EveryPrdTemplateKey_HasARegisteredContract(string templateKey)
     {
@@ -81,9 +80,10 @@ public class TemplateContractRegistryTests
             "stripe_purchase_confirmation",
             "trade_review_completed",
             "team_review_ready",
-            "reviewer_trade_assigned",
             "reviewer_team_assigned",
-            "welcome_email"
+            "welcome_email",
+            "trade_submitted",
+            "membership_season_pass_confirmed"
         };
 
         Registry.RegisteredKeys.Should().Contain(configuredKeys);

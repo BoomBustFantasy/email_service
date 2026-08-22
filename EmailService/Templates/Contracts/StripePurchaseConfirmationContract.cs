@@ -2,7 +2,10 @@ namespace EmailService.Templates.Contracts;
 
 /// <summary>
 /// PRD #17 template `stripe_purchase_confirmation`.
-/// Required variables: purchase_type, credits_amount.
+/// Required variables: product_type, credits_amount.
+/// PRD #17 and boom #247 both specify the name `purchase_type`, but the
+/// shipped producer sends `product_type` and the queue payloads confirm it.
+/// The producer wins - see docs/email-templates.md.
 /// </summary>
 public class StripePurchaseConfirmationContract : ITemplateContract
 {
@@ -12,7 +15,7 @@ public class StripePurchaseConfirmationContract : ITemplateContract
     public SenderIdentity? SenderOverride { get; init; }
 
     public required string RecipientEmail { get; init; }
-    public required string PurchaseType { get; init; }
+    public required string ProductType { get; init; }
     public required string CreditsAmount { get; init; }
 
     public static ITemplateContract Create(
@@ -20,7 +23,7 @@ public class StripePurchaseConfirmationContract : ITemplateContract
         new StripePurchaseConfirmationContract
         {
             RecipientEmail = recipientEmail,
-            PurchaseType = TemplateVariables.Read(variables, "purchase_type"),
+            ProductType = TemplateVariables.Read(variables, "product_type"),
             CreditsAmount = TemplateVariables.Read(variables, "credits_amount")
         };
 
@@ -29,7 +32,7 @@ public class StripePurchaseConfirmationContract : ITemplateContract
         errors = new List<string>();
 
         TemplateVariables.RequireEmail(RecipientEmail, "recipient_email", errors);
-        TemplateVariables.RequireText(PurchaseType, "purchase_type", errors);
+        TemplateVariables.RequireText(ProductType, "product_type", errors);
         TemplateVariables.RequireText(CreditsAmount, "credits_amount", errors);
 
         return errors.Count == 0;
@@ -37,7 +40,7 @@ public class StripePurchaseConfirmationContract : ITemplateContract
 
     public Dictionary<string, string> ToBrevoParams() => new()
     {
-        ["purchase_type"] = PurchaseType,
+        ["product_type"] = ProductType,
         ["credits_amount"] = CreditsAmount
     };
 }

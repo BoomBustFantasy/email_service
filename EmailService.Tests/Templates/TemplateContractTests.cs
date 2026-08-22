@@ -46,13 +46,13 @@ public class TemplateContractTests
     public void StripePurchaseConfirmation_ValidPayload_Passes()
     {
         var contract = StripePurchaseConfirmationContract.Create(
-            Recipient, Vars(("purchase_type", "credits"), ("credits_amount", "50")));
+            Recipient, Vars(("product_type", "credits"), ("credits_amount", "50")));
 
         contract.Validate(out var errors).Should().BeTrue();
         errors.Should().BeEmpty();
         contract.ToBrevoParams().Should().BeEquivalentTo(new Dictionary<string, string>
         {
-            ["purchase_type"] = "credits",
+            ["product_type"] = "credits",
             ["credits_amount"] = "50"
         });
     }
@@ -61,7 +61,7 @@ public class TemplateContractTests
     public void StripePurchaseConfirmation_MissingCreditsAmount_FailsAndNamesTheVariable()
     {
         var contract = StripePurchaseConfirmationContract.Create(
-            Recipient, Vars(("purchase_type", "credits")));
+            Recipient, Vars(("product_type", "credits")));
 
         contract.Validate(out var errors).Should().BeFalse();
         errors.Should().ContainSingle().Which.Should().Contain("credits_amount");
@@ -150,5 +150,80 @@ public class TemplateContractTests
             Recipient, Vars(("review_id", "7"), ("review_url", "https://boombustfantasy.com/team-reviews/7")));
 
         contract.RecipientEmail.Should().Be(Recipient);
+    }
+
+    // --- templates the producer added after PRD #17 closed --------------------
+
+    private static Dictionary<string, string> TradeSubmittedVars() => new()
+    {
+        ["trade_id"] = "1467",
+        ["trade_url"] = "https://boombustfantasy.com/trades/1467",
+        ["next_show_label"] = "Saturday, August 22 at 7:30 PM CT",
+        ["youtube_url"] = "https://www.youtube.com/@BoomBustFantasy"
+    };
+
+    [Fact]
+    public void TradeSubmitted_RealProducerPayload_Passes()
+    {
+        var contract = TradeSubmittedContract.Create(Recipient, TradeSubmittedVars());
+
+        contract.Validate(out var errors).Should().BeTrue();
+        errors.Should().BeEmpty();
+        contract.ToBrevoParams().Should().BeEquivalentTo(TradeSubmittedVars());
+    }
+
+    [Theory]
+    [InlineData("trade_id")]
+    [InlineData("trade_url")]
+    [InlineData("next_show_label")]
+    [InlineData("youtube_url")]
+    public void TradeSubmitted_MissingAnyVariable_FailsAndNamesIt(string missing)
+    {
+        var vars = TradeSubmittedVars();
+        vars.Remove(missing);
+
+        TradeSubmittedContract.Create(Recipient, vars).Validate(out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains(missing));
+    }
+
+    /// <summary>next_show_label is a formatted human string, not a date.</summary>
+    [Fact]
+    public void TradeSubmitted_PassesNextShowLabelThroughVerbatim()
+    {
+        var contract = TradeSubmittedContract.Create(Recipient, TradeSubmittedVars());
+
+        contract.ToBrevoParams()["next_show_label"]
+            .Should().Be("Saturday, August 22 at 7:30 PM CT");
+    }
+
+    private static Dictionary<string, string> SeasonPassVars() => new()
+    {
+        ["tier"] = "Pro",
+        ["expires_at"] = "2027-02-01",
+        ["checkin_credits_included"] = "6"
+    };
+
+    [Fact]
+    public void MembershipSeasonPassConfirmed_ValidPayload_Passes()
+    {
+        var contract = MembershipSeasonPassConfirmedContract.Create(Recipient, SeasonPassVars());
+
+        contract.Validate(out var errors).Should().BeTrue();
+        errors.Should().BeEmpty();
+        contract.ToBrevoParams().Should().BeEquivalentTo(SeasonPassVars());
+    }
+
+    [Theory]
+    [InlineData("tier")]
+    [InlineData("expires_at")]
+    [InlineData("checkin_credits_included")]
+    public void MembershipSeasonPassConfirmed_MissingAnyVariable_FailsAndNamesIt(string missing)
+    {
+        var vars = SeasonPassVars();
+        vars.Remove(missing);
+
+        MembershipSeasonPassConfirmedContract.Create(Recipient, vars)
+            .Validate(out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains(missing));
     }
 }

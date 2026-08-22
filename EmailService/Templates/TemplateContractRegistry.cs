@@ -35,12 +35,19 @@ public class TemplateContractRegistry : ITemplateContractRegistry
             [StripePurchaseConfirmationContract.Key] = StripePurchaseConfirmationContract.Create,
             [TradeReviewCompletedContract.Key] = TradeReviewCompletedContract.Create,
             [TeamReviewReadyContract.Key] = TeamReviewReadyContract.Create,
-            [ReviewerTradeAssignedContract.Key] = ReviewerTradeAssignedContract.Create,
             [ReviewerTeamAssignedContract.Key] = ReviewerTeamAssignedContract.Create,
 
-            // Outside the PRD #17 scope, kept because the template is configured
-            // and the producer sends it.
-            [WelcomeEmailContract.Key] = WelcomeEmailContract.Create
+            // ReviewerTradeAssignedContract is intentionally absent. The key exists
+            // in boom's EmailTemplateKey union but has no call site and has never
+            // produced a message, so there is no Brevo template to map it to. If
+            // the producer ever wires it, register it here and add its ID to
+            // TemplateIdMap — the startup validator enforces that both are done.
+
+            // Added to the producer after PRD #17 closed. Not in that ticket's
+            // template scope, but live traffic depends on them.
+            [WelcomeEmailContract.Key] = WelcomeEmailContract.Create,
+            [TradeSubmittedContract.Key] = TradeSubmittedContract.Create,
+            [MembershipSeasonPassConfirmedContract.Key] = MembershipSeasonPassConfirmedContract.Create
         };
 
     public IReadOnlyCollection<string> RegisteredKeys => Factories.Keys;
