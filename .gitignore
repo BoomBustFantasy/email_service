@@ -44,3 +44,7 @@ _ReSharper*/
 
 # Test results
 TestResults/
+
+# Claude Code worktrees — local scratch checkouts, never committed.
+# .claude/agents/ and CLAUDE.md are tracked deliberately.
+.claude/worktrees/
