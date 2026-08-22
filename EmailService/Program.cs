@@ -48,6 +48,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddScoped<EmailService.Services.ISupabaseService, EmailService.Services.SupabaseService>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<EmailService.Templates.ITemplateService, EmailService.Templates.TemplateService>();
+builder.Services.AddSingleton<EmailService.Templates.ITemplateContractRegistry, EmailService.Templates.TemplateContractRegistry>();
 builder.Services.AddSingleton<EmailService.Services.QueueMetrics>();
 builder.Services.AddScoped<EmailService.Services.IEmailService, EmailService.Services.BrevoEmailService>();
 builder.Services.AddScoped<EmailService.Services.ReviewEmailFactory>();
@@ -71,6 +72,19 @@ await supabaseClient.InitializeAsync();
 
 // Configure HTTP pipeline
 app.UseRouting();
+
+// Brevo webhook signatures are computed over the raw request body, which model
+// binding consumes before the controller runs. Buffer it so the HMAC check can
+// rewind and re-read it.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/webhooks"))
+    {
+        context.Request.EnableBuffering();
+    }
+
+    await next();
+});
 
 // Health check endpoint
 app.MapHealthChecks("/health");

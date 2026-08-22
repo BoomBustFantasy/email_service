@@ -167,8 +167,11 @@ public class QueueConsumerService : BackgroundService
                 return;
             }
 
-            // Check suppression list
-            var isSuppressed = await CheckSuppressionAsync(supabaseClient, outboxRecord.RecipientEmail);
+            // Check suppression list. Suppression only gates marketing sends —
+            // transactional mail (review completions, purchase confirmations)
+            // must still reach a recipient who has unsubscribed from marketing.
+            var isSuppressed = await CheckSuppressionAsync(
+                supabaseClient, outboxRecord.RecipientEmail, outboxRecord.Classification);
             if (isSuppressed)
             {
                 _logger.LogInformation(
@@ -193,9 +196,6 @@ public class QueueConsumerService : BackgroundService
                 var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
                 var templateService = scope.ServiceProvider.GetRequiredService<ITemplateService>();
 
-                // Resolve template ID from template key
-                var templateId = templateService.ResolveTemplateId(outboxRecord.TemplateKey);
-
                 // Convert template variables (JObject) to Dictionary<string, string>
                 var templateParams = new Dictionary<string, string>();
                 if (outboxRecord.TemplateVariables != null)
@@ -209,11 +209,40 @@ public class QueueConsumerService : BackgroundService
                     }
                 }
 
-                // Send the email
-                sent = await emailService.SendTemplateEmailAsync(
-                    outboxRecord.RecipientEmail,
-                    templateId,
-                    templateParams);
+                // Build the typed contract for this template key and validate it
+                // before sending. A payload missing required variables is a producer
+                // bug that retrying cannot fix, so dead-letter it immediately rather
+                // than burning the retry budget (PRD #17: "malformed messages fail
+                // fast and visibly").
+                var contractRegistry = scope.ServiceProvider.GetRequiredService<ITemplateContractRegistry>();
+                if (!contractRegistry.TryCreate(
+                        outboxRecord.TemplateKey,
+                        outboxRecord.RecipientEmail,
+                        templateParams,
+                        out var contract,
+                        out var registryError))
+                {
+                    _logger.LogError(
+                        "Unknown template key for outbox {OutboxId}: {Error}", outboxRecord.Id, registryError);
+
+                    await RejectMessageAsync(
+                        supabaseClient, message, outboxRecord, registryError!);
+                    return;
+                }
+
+                if (!contract!.Validate(out var validationErrors))
+                {
+                    var reason = $"Template contract validation failed for '{outboxRecord.TemplateKey}': " +
+                                 string.Join("; ", validationErrors);
+                    _logger.LogError("Invalid payload for outbox {OutboxId}: {Reason}", outboxRecord.Id, reason);
+
+                    await RejectMessageAsync(supabaseClient, message, outboxRecord, reason);
+                    return;
+                }
+
+                // Send the email through the contract path, which resolves the Brevo
+                // template ID and applies the sender identity for this template.
+                sent = await emailService.SendTemplateEmailAsync(contract);
 
                 if (sent)
                 {
@@ -275,8 +304,37 @@ public class QueueConsumerService : BackgroundService
         }
     }
 
-    private async Task<bool> CheckSuppressionAsync(Client supabaseClient, string email)
+    /// <summary>
+    /// Marketing classification is the only one suppression applies to (PRD #17:
+    /// "apply suppression for marketing messages / transactional sends continue").
+    /// </summary>
+    public const string MarketingClassification = "marketing";
+
+    public static bool IsSuppressible(string? classification) =>
+        string.Equals(classification, MarketingClassification, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Removes a message that can never succeed. A payload whose template key is
+    /// unknown or whose required variables are missing is a producer defect —
+    /// retrying it just burns the retry budget and delays real traffic, so it is
+    /// recorded as "invalid" in the delivery log and archived off the queue.
+    /// </summary>
+    private async Task RejectMessageAsync(
+        Client supabaseClient, PgmqMessage message, EmailOutbox outboxRecord, string reason)
     {
+        await LogDeliveryAttempt(
+            supabaseClient, outboxRecord, message.ReadCount + 1, "invalid", reason);
+        await ArchiveMessageFromPgmq(supabaseClient, message.MsgId);
+        _metrics.IncrementFailed();
+    }
+
+    private async Task<bool> CheckSuppressionAsync(Client supabaseClient, string email, string? classification)
+    {
+        if (!IsSuppressible(classification))
+        {
+            return false;
+        }
+
         try
         {
             var normalizedEmail = email.ToLowerInvariant();

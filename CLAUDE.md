@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A headless .NET 9 console app (`Microsoft.Extensions.Hosting` generic host, no ASP.NET endpoints) that polls the Boom Bust Fantasy Supabase database on a Quartz schedule and sends transactional email through Brevo. It is a background worker for the Boom Bust Fantasy Nuxt app, which lives in a separate repository.
+A .NET 9 ASP.NET Core service that is simultaneously an HTTP API and a background queue consumer. It drains a Supabase **pgmq** queue of outbound email jobs, validates each payload against a typed template contract, and sends through Brevo — then ingests Brevo's delivery webhooks to close the loop on delivery state and suppression. It is the consumer half of a dual-repo rollout; the `boom` Nuxt app is the producer that writes to the queue.
+
+Tracked by [PRD #17](https://github.com/BoomBustFantasy/email_service/issues/17). Read that ticket before changing template keys, retry policy, or suppression rules — it is the contract this service is measured against.
 
 ## Commands
 
@@ -13,63 +15,70 @@ dotnet build email_service.sln
 ```
 
 ```bash
+dotnet test email_service.sln
+```
+
+```bash
+dotnet test EmailService.Tests/EmailService.Tests.csproj --filter "FullyQualifiedName~Suppression"
+```
+
+```bash
 dotnet run --project EmailService
 ```
 
-Restore pulls `BoomBust.Logging` from the private **GitHub Packages** feed at `https://nuget.pkg.github.com/BoomBustFantasy/index.json`. If restore fails on that package, add the source with a PAT that has `read:packages`:
+Restore pulls `BoomBust.Logging` from the private **GitHub Packages** feed. If it fails, add the source with a PAT that has `read:packages`:
 
 ```bash
 dotnet nuget add source https://nuget.pkg.github.com/BoomBustFantasy/index.json --name BoomBustFantasy --username BoomBustFantasy --password <PAT> --store-password-in-clear-text
 ```
 
-`nuget.config` is gitignored and holds those credentials — never commit it.
+`nuget.config` and `appsettings.json` are both gitignored and hold credentials. Copy `EmailService/appsettings.template.json` to `appsettings.json` to start. Every key also works as an environment variable (`Brevo__ApiKey`, `Supabase__ServiceRoleKey`) — that's how the container is configured.
 
-### Tests
-
-There is no test project on `main`. `EmailService.Tests` (xUnit + FluentAssertions + Moq, targeting net10.0) exists only on the `PRD-17` branch and is not referenced by `email_service.sln`. When working on a branch that has it:
-
-```bash
-dotnet test EmailService.Tests/EmailService.Tests.csproj
-```
-
-```bash
-dotnet test EmailService.Tests/EmailService.Tests.csproj --filter "FullyQualifiedName~ExponentialBackoff"
-```
-
-### Local config
-
-Copy `EmailService/appsettings.template.json` to `EmailService/appsettings.json` and fill in the blanks. `appsettings.json` is gitignored. Every key can also be supplied as an environment variable (`Brevo__ApiKey`, `Supabase__ServiceRoleKey`, …) — that's how the container is configured, since the image ships without an `appsettings.json`.
-
-`Supabase:ServiceRoleKey` is mandatory; both the `Client` registration and `SupabaseService`'s constructor throw at startup without it.
+Note the test project targets **net10.0** while the service targets **net9.0**.
 
 ## Architecture
 
-`Program.cs` is the single composition root and does four things: binds `Brevo`/`Supabase`/`App` config sections to POCOs in `Configs/`, registers a singleton Supabase `Client`, registers the scoped services, and schedules Quartz jobs. `InitializeAsync()` on the Supabase client is awaited *after* `Build()` and before `RunAsync()`.
+`Program.cs` is the composition root: it binds config sections, registers a singleton Supabase `Client`, registers services, adds `QueueConsumerService` as a hosted service, and maps `/`, `/health`, `/metrics`, plus controllers. `InitializeAsync()` on the Supabase client is awaited after `Build()`.
 
-The pipeline for every job is the same three-step loop:
+### The send path
 
-1. `ISupabaseService` queries a review table for rows where a `*_sent` / `*_notified` flag is still false, then resolves the user's email by calling Supabase **Admin Auth** (`GetUserById`) per row — emails live in `auth.users`, not in the app tables.
-2. `IEmailService.SendTemplateEmailAsync` POSTs to `https://api.brevo.com/v3/smtp/email` with a numeric `templateId` and a `params` dictionary.
-3. Only on a successful send does the job flip the flag back in Supabase. **This flag is the sole idempotency guard** — the schedule re-runs every minute, so any code path that sends before marking will spam users on the next tick.
+`QueueConsumerService.ProcessMessageAsync` is the spine. Order matters — each step is a gate:
+
+1. **Read** a batch from pgmq via the `read_email_queue` RPC (5s poll, batch 10, 300s visibility timeout).
+2. **Idempotency** — skip if `EmailDeliveryLog` already has a `sent`/`delivered` row for this `idempotency_key`.
+3. **Suppression** — `CheckSuppressionAsync`, which only applies to `marketing`-classified messages. Transactional mail must reach recipients who unsubscribed from marketing (PRD stories 14/15).
+4. **Contract** — `ITemplateContractRegistry.TryCreate` builds a typed contract for the `template_key`, then `Validate()` checks required variables. Either failing calls `RejectMessageAsync`, which logs status `invalid` and archives the message off the queue. A malformed payload is a producer bug that retrying cannot fix, so it must not consume the retry budget.
+5. **Send** via `IEmailService.SendTemplateEmailAsync(ITemplateContract)` — the contract overload, which resolves the Brevo numeric ID and applies sender identity. Never call the raw `(to, templateId, params)` overload from the consumer; it bypasses validation entirely.
+6. **Archive** on success; on failure, let pgmq redeliver via the visibility timeout.
+
+### Adding a template
+
+Four places, all required:
+
+1. A contract class in `Templates/Contracts/` with a `public const string Key`, a static `Create(recipientEmail, variables)` factory, `Validate`, and `ToBrevoParams`. The four review templates share `ReviewLinkContract`.
+2. An entry in `TemplateContractRegistry.Factories`.
+3. An entry in `TemplateIdMap` in config, mapping the key to the Brevo numeric template ID.
+4. The Brevo template itself, whose `{{params.x}}` names must match `ToBrevoParams()` keys.
+
+Keys are **producer-facing**. `boom` sends `template_key`; changing one is a breaking change across both repos. A key present in `TemplateIdMap` but absent from the registry is rejected as invalid — the map alone does not make a template work.
 
 ### Things that are easy to get wrong
 
-- **Template IDs are hardcoded constants inside the job class** (e.g. `TeamReviewNotificationTemplateId = 5` in `NotifyReviewerOfTeamReviewJob`), and the `templateParams` keys must match the `{{params.x}}` placeholders defined in the Brevo dashboard. Neither side is validated at compile time or at startup — a typo just produces a blank field in a delivered email.
-- **`ReviewEmailFactory` is dead code.** It is registered in DI and builds plain-text `EmailMessage` bodies for all four email types, but nothing resolves it — the service moved to Brevo templates. Same for `IEmailService.SendEmailAsync` (the non-template overload).
-- **Most of `ISupabaseService` is unused.** Only `GetTeamReviewsForReviewerNotificationAsync` / `MarkTeamReviewerNotifiedAsync` have a caller. The other six methods (completed trade reviews, team-review-ready-with-YouTube-link, trade reviewer notifications) are fully implemented but have no job driving them. Adding one of those emails means writing a job and registering it in `Program.cs`, not writing new data access.
-- **The N+1 admin-auth call is deliberate but unbounded.** Each row triggers a separate `GetUserById` round trip; there is no `.Limit()` on any query, so a large backlog means a long job run. `[DisallowConcurrentExecution]` on the job prevents overlapping ticks.
-- **`TradeReview` maps to the `Trades` table**, not `TradeReviews`. `TeamReview` maps to `TeamReviews`.
-- **`SupabaseModels/User.cs` is inert** — it uses `System.ComponentModel.DataAnnotations.Schema` attributes rather than Postgrest ones and is not a `BaseModel`, so it can't be used with `_supabase.From<T>()`. User lookups go through Admin Auth instead.
-- Jobs swallow their own exceptions and log; a failure never surfaces as a non-zero exit or a stopped host.
+- **Webhook signature verification must fail closed.** `BrevoSignatureVerifier.IsValid` returns false for an unset secret, a malformed signature, or a mismatch. It previously returned `true` when `Brevo:WebhookSecret` was unset, which let anyone create suppression records. Comparison is `CryptographicOperations.FixedTimeEquals`, not `==`.
+- **The webhook body is read twice.** Model binding consumes it, then the HMAC check rewinds. `Program.cs` calls `EnableBuffering()` for `/webhooks` requests to make that legal — without it the rewind throws on a non-seekable stream.
+- **`ReviewEmailFactory` is dead code** carried over from the pre-queue design, still registered in DI with no callers.
+- **Three contracts are orphaned**: `TeamReviewNotificationContract`, `TradeOfferNotificationContract`, `PurchaseConfirmationContract`. They are not in the PRD's template scope, not in the registry, and not in `TemplateIdMap` — unreachable. Delete or wire them; don't assume they're live.
+- **pgmq does not dead-letter on its own**, despite a comment claiming it does. Failed sends simply redeliver when the visibility timeout lapses. Explicit removal only happens via `ArchiveMessageFromPgmq`.
+- Jobs and the consumer swallow exceptions and log; a failure never stops the host.
 
 ### Logging
 
-`UseBoomBustLogging` (from the private `BoomBust.Logging` package) configures Serilog: console plus rolling file at `logs/email-service-.txt`, with `Microsoft`, `System`, and `Quartz` namespaces forced to Warning. `BetterStack` keys in the config template feed that package.
+`UseBoomBustLogging` (private `BoomBust.Logging` package) configures Serilog — console plus rolling file at `logs/email-service-.txt`, with `Microsoft`, `System`, and `Quartz` forced to Warning.
 
 ## Deployment
 
-Push to `main` triggers `.github/workflows/production-deploy.yml`, which builds the Dockerfile and pushes `jackbruzan/email_service:latest` and `:<run_number>` to Docker Hub. The build stage injects the GitHub Packages PAT as a BuildKit secret (`--mount=type=secret,id=nuget_token`) so it never lands in an image layer; the runtime stage runs as non-root `appuser`. There is no CI build or test step on pull requests.
+Push to `main` builds the Dockerfile and pushes `jackbruzan/email_service:latest` and `:<run_number>` to Docker Hub. The GitHub Packages PAT is injected as a BuildKit secret so it never lands in a layer; the runtime stage runs as non-root `appuser`. There is no CI build or test step on pull requests.
 
 ## Related repositories
 
-`.github/copilot-instructions.md` and `.github/agents/*.md` describe the **Boom Bust Fantasy Nuxt 4 front-end**, not this service. Ignore them when working on C# code here. The only overlap that matters is the shared Supabase Postgres instance — the `Trades` and `TeamReviews` tables this service reads and writes are owned by that app, and the front-end enforces RLS on them (this service bypasses RLS via the service role key).
+`.github/copilot-instructions.md` and `.github/agents/*.md` describe the **Boom Bust Fantasy Nuxt front-end**, not this service. Ignore them for C# work here. The shared Supabase instance is the real coupling: this service uses the service role key and bypasses RLS.

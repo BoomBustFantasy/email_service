@@ -11,6 +11,12 @@ public interface ITemplateContract
     string TemplateKey { get; }
 
     /// <summary>
+    /// Address this email is sent to. Declared on the interface so the send path
+    /// does not have to type-switch over every concrete contract type.
+    /// </summary>
+    string RecipientEmail { get; }
+
+    /// <summary>
     /// Validates that all required template variables are present and valid
     /// </summary>
     /// <param name="errors">Collection of validation errors, if any</param>

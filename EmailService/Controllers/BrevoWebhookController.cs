@@ -72,30 +72,31 @@ public class BrevoWebhookController : ControllerBase
             return false;
         }
 
-        // If no webhook secret is configured, skip validation (development mode)
+        // An unconfigured secret means we cannot verify anything. Reject rather
+        // than accept — an unsigned webhook can create suppression records and
+        // mutate delivery state.
         if (string.IsNullOrWhiteSpace(_brevoConfig.WebhookSecret))
         {
-            _logger.LogWarning("Webhook secret not configured - skipping signature validation");
-            return true;
+            _logger.LogError(
+                "Brevo:WebhookSecret is not configured - rejecting webhook. Set it to enable signature verification.");
+            return false;
         }
 
-        // Read request body
+        // Read request body. Program.cs buffers /webhooks requests so this
+        // rewind is legal after model binding has consumed the stream.
+        if (!Request.Body.CanSeek)
+        {
+            _logger.LogError("Request body is not seekable - cannot verify webhook signature.");
+            return false;
+        }
+
         Request.Body.Position = 0;
-        using var reader = new StreamReader(Request.Body);
+        using var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true);
         var body = reader.ReadToEnd();
         Request.Body.Position = 0;
 
-        // Calculate HMAC-SHA256 signature
-        var keyBytes = Encoding.UTF8.GetBytes(_brevoConfig.WebhookSecret);
-        var bodyBytes = Encoding.UTF8.GetBytes(body);
-
-        using var hmac = new HMACSHA256(keyBytes);
-        var hash = hmac.ComputeHash(bodyBytes);
-        var calculatedSignature = BitConverter.ToString(hash).Replace("-", "").ToLower();
-
-        // Compare signatures
-        var providedSignature = signatureHeader.ToString().ToLower();
-        return calculatedSignature == providedSignature;
+        return BrevoSignatureVerifier.IsValid(
+            _brevoConfig.WebhookSecret, body, signatureHeader.ToString());
     }
 
     private async Task ProcessWebhookEventAsync(BrevoWebhookEvent webhookEvent)
