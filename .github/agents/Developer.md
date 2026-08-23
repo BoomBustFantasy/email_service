@@ -1,191 +1,955 @@
 ---
 name: Developer
-description: General-purpose developer agent for the Boom Bust Fantasy Football app. Use this agent for implementing features, fixing bugs, and writing Vue/TypeScript code. Contains hard-won knowledge about recurring pitfalls — read the gotchas sections BEFORE implementing auth, permissions, or data fetching.
+description: General-purpose developer agent for the email service application. Use this agent for implementing features, fixing bugs, and writing C# code.
+model: Claude Sonnet 4.5 (copilot)
 ---
 
-# Boom Bust Developer Agent
+# Email Service Developer Guide
 
-You are a senior full-stack developer working on the Boom Bust Fantasy Football app. Before writing any code, internalize the gotchas below — these are patterns that have burned us repeatedly and must never be repeated.
+## 🎯 Overview
+
+The **email_service** is a production-grade ASP.NET Core application that handles transactional email delivery for the Boom Bust Fantasy Football platform. It combines a **web API** with a **background queue consumer** to provide reliable, idempotent, multi-consumer-safe email processing with retry logic and dead letter queue (DLQ) management.
+
+### Key Capabilities
+
+- **Queue-Based Processing:** Messages are processed from a PostgreSQL-backed queue (pgmq) with automatic retry and DLQ
+- **Idempotent Delivery:** Prevents duplicate emails using unique idempotency keys
+- **Template Management:** Type-safe template contracts with validation and Brevo integration
+- **Webhook Handling:** Receives and processes Brevo delivery events (delivered, bounced, opened, etc.)
+- **Health Monitoring:** Metrics, health checks, and operational alerts
+- **Multi-Consumer Safe:** Horizontally scalable with optimistic locking
 
 ---
 
-## 🚨 CRITICAL GOTCHAS — READ FIRST
+## 🏗️ Architecture
 
-### 1. Supabase User ID: ALWAYS use `user.value.sub || user.value.id`
+### Project Type
+**Web Application** (`Microsoft.NET.Sdk.Web`) running on .NET 9.0
 
-**The problem:** Supabase's user object exposes the user's UUID in different properties depending on the rendering context:
-- **Server-side (SSR):** the UUID is at `user.value.sub` (raw JWT claim)
-- **Client-side (after hydration):** the UUID is at `user.value.id`
+The application simultaneously:
+1. Serves HTTP API endpoints (health checks, webhooks, admin operations)
+2. Executes background queue consumer as a hosted service
+3. Provides real-time metrics and monitoring endpoints
 
-Using only `user.value.sub` will be `undefined` on the client, silently failing any database lookup that uses the ID (role checks, `UserData` queries, etc.).
+### Core Design Pattern: Queue-Based Processing
 
-**The rule — NO EXCEPTIONS:**
-```typescript
-// ✅ ALWAYS do this
-const userId = user.value.sub || user.value.id
-
-// ❌ NEVER do this
-const userId = user.value.sub   // undefined on client
-const userId = user.value.id    // undefined on server
+```
+Producer (external system) 
+    ↓
+OutboundEmailQueue (pgmq)
+    ↓
+QueueConsumerService (polls every 5s)
+    ↓
+Lock message (5min visibility timeout)
+    ↓
+Check idempotency (EmailDeliveryLog)
+    ↓
+Check suppression list
+    ↓
+Send via Brevo API
+    ↓
+Log delivery attempt
+    ↓
+Archive message OR retry with backoff
+    ↓ (if max retries exceeded)
+Move to Dead Letter Queue
 ```
 
-This applies everywhere a user UUID is needed: role lookups, Supabase queries, API route user identification, etc.
+### Reliability Features
+
+1. **Exponential Backoff Retry**
+   - Base delay: 1 second
+   - Multiplier: 2.0x
+   - Max delay: 60 seconds
+   - Max attempts: 3
+
+2. **Idempotency**
+   - Every message has a unique `idempotency_key`
+   - Processed messages are logged and skipped on retry
+   - Prevents duplicate sends across multiple consumers
+
+3. **Dead Letter Queue**
+   - Messages that fail 3+ times move to DLQ
+   - Admin API allows replaying DLQ messages
+   - Operational alerts fire when DLQ exceeds threshold
+
+4. **Multi-Consumer Safety**
+   - Optimistic locking with `locked_until` timestamp
+   - Atomic compare-and-swap operations
+   - Multiple service instances can safely consume the same queue
 
 ---
 
-### 2. Role/Permission checks: ALWAYS use `DEFAULT_REVIEWER_ID` comparison — NEVER a DB lookup
+## 🛠️ Tech Stack
 
-**The problem — and why the "obvious" async pattern BREAKS IN PRODUCTION:**
+### Core Framework
+- **ASP.NET Core 9.0** - Web host and dependency injection
+- **C# 12** - Language features (required properties, record types)
 
-Bundling the role DB query inside `useLazyAsyncData` and deriving `isReviewer` from `data.value?.role` looks correct but silently fails:
+### Dependencies
+- **Supabase** - PostgreSQL database client with Postgrest ORM
+  - `Supabase` NuGet package
+  - Admin Auth for user email lookups
+  
+- **Brevo** (formerly Sendinblue) - Transactional email provider
+  - REST API integration via `HttpClient`
+  - Template-based email sending
+  - Webhook event processing
 
-1. SSR runs, `user.value` is null → fetch short-circuits, returns `{ role: null }` → this null state is serialized into the Nuxt payload
-2. Client hydrates with `user` already signed in (no change from `null` → user because Nuxt pre-populates auth from cookie)
-3. `watch: [user]` **never fires** — the value didn't change between SSR and client mount
-4. `isReviewer` is permanently `false`. "Access Denied" shows forever.
+- **pgmq** - PostgreSQL Message Queue
+  - Managed via Supabase RPC functions
+  - Provides visibility timeouts and message archiving
 
-This is not a timing issue or a fluke. It is structural. **This exact bug existed in `live-show-command.vue` and was fixed by switching to the pattern below.**
+- **BoomBust.Logging** - Custom structured logging
+  - File-based logging with rotation
+  - Configurable log levels per namespace
 
-**The rule — `isReviewer` must be a synchronous computed from `user.value` using `DEFAULT_REVIEWER_ID`:**
+### Development Tools
+- **xUnit** - Test framework
+- **FluentAssertions** - Assertion library for tests
 
-```typescript
-// ✅ THE ONLY CORRECT PATTERN in this app (used by my-trades.vue, live-show-command.vue, etc.)
-import { DEFAULT_REVIEWER_ID } from '~/config/reviewers'
+---
 
-const user = useSupabaseUser()
+## 📁 Project Structure
 
-const isReviewer = computed(() => {
-    if (!user.value) return false
-    const userId = user.value.sub || user.value.id
-    return userId === DEFAULT_REVIEWER_ID
-})
+```
+EmailService/
+├── Program.cs                    # Application entry point, DI configuration
+├── appsettings.json             # Configuration (gitignored, use template)
+├── appsettings.template.json    # Configuration template (committed)
+│
+├── Configs/                     # Configuration models
+│   ├── AppConfig.cs            # Base URL, admin API key
+│   ├── BrevoConfig.cs          # API key, webhook secret, sender info
+│   ├── QueueReliabilityConfig.cs  # Retry, backoff, alert thresholds
+│   └── SupabaseConfig.cs       # URL, API key, service role key
+│
+├── Controllers/                 # HTTP API endpoints
+│   ├── AdminController.cs      # Dead letter replay, metrics
+│   └── BrevoWebhookController.cs  # Webhook event receiver
+│
+├── DTOs/                        # Data transfer objects
+│   ├── BrevoWebhookEvent.cs    # Webhook payload model
+│   ├── EmailMessage.cs         # Generic email DTO
+│   ├── TeamReviewEmailInfo.cs  # Team review notification info
+│   ├── TeamReviewNotificationInfo.cs
+│   └── TradeEmailInfo.cs       # Trade review notification info
+│
+├── Filters/                     # ASP.NET filters
+│   └── AdminAuthAttribute.cs   # API key authentication filter
+│
+├── Services/                    # Business logic services
+│   ├── IEmailService.cs        # Email sending abstraction
+│   ├── BrevoEmailService.cs    # Brevo API implementation
+│   ├── ISupabaseService.cs     # Database operations abstraction
+│   ├── SupabaseService.cs      # Supabase database implementation
+│   ├── QueueConsumerService.cs # Background queue processor (hosted service)
+│   ├── QueueConsumerHealthCheck.cs  # Health check for queue
+│   ├── QueueMetrics.cs         # Thread-safe metrics tracking
+│   └── ReviewEmailFactory.cs   # Factory for review email construction
+│
+├── SupabaseModels/              # Database table models
+│   ├── EmailDeliveryLog.cs     # Delivery attempt tracking
+│   ├── EmailOutbox.cs          # Outbound message queue
+│   ├── EmailSuppression.cs     # Unsubscribe/bounce suppression
+│   ├── TeamReview.cs           # Team review records
+│   ├── TradeReview.cs          # Trade review records
+│   ├── User.cs                 # User account data
+│   └── Enums/
+│       └── AdviceStatus.cs     # Review status enumeration
+│
+└── Templates/                   # Template contract system
+    ├── ITemplateContract.cs    # Base contract interface
+    ├── ITemplateService.cs     # Template resolution service
+    ├── TemplateService.cs      # Implementation
+    ├── TemplateConfig.cs       # Template ID mapping configuration
+    ├── SenderIdentity.cs       # Email sender info model
+    └── Contracts/              # Concrete template implementations
+        ├── PurchaseConfirmationContract.cs
+        ├── TeamReviewNotificationContract.cs
+        └── TradeOfferNotificationContract.cs
 
-// Fetch page DATA separately — this can use useLazyAsyncData normally
-const { data, pending } = await useLazyAsyncData(
-    'my-page-key',
-    async () => {
-        if (!user.value) return null
-        const userId = user.value.sub || user.value.id
-        // Gate the expensive fetch on reviewer status too, not just log-in
-        if (userId !== DEFAULT_REVIEWER_ID) return null
-        // fetch actual page data here...
+EmailService.Tests/
+├── BehavioralSpecifications.cs  # Behavioral tests (no mocking)
+├── Controllers/                 # (future: controller tests)
+├── Services/                    # (future: service tests)
+└── Templates/                   # (future: template validation tests)
+```
+
+---
+
+## 🔧 Core Components Deep Dive
+
+### 1. Program.cs - Application Bootstrap
+
+**Key Responsibilities:**
+- Configure dependency injection
+- Register services (Supabase, Brevo, Template Service, Queue Consumer)
+- Setup logging with BoomBust.Logging
+- Register health checks
+- Configure HTTP pipeline
+- Map endpoints (health, metrics, status, controllers)
+
+**Critical Services Registered:**
+```csharp
+// Singleton - Supabase client
+builder.Services.AddSingleton<Client>(/* Supabase config */);
+
+// Singleton - Template service, Queue metrics
+builder.Services.AddSingleton<ITemplateService, TemplateService>();
+builder.Services.AddSingleton<QueueMetrics>();
+
+// Scoped - Database and email services
+builder.Services.AddScoped<ISupabaseService, SupabaseService>();
+builder.Services.AddScoped<IEmailService, BrevoEmailService>();
+
+// Hosted - Background queue consumer
+builder.Services.AddHostedService<QueueConsumerService>();
+```
+
+**Endpoints:**
+- `GET /` - Service status (name, version, timestamp)
+- `GET /health` - Health check endpoint
+- `GET /metrics` - Queue processing metrics
+- `POST /webhooks/brevo` - Brevo webhook receiver
+- `POST /admin/replay-dead-letters` - Admin: replay DLQ messages
+
+---
+
+### 2. QueueConsumerService - Background Processor
+
+**Location:** `Services/QueueConsumerService.cs`
+
+**Pattern:** ASP.NET Core `BackgroundService` (implements `IHostedService`)
+
+**Processing Flow:**
+1. **Poll Queue:** Every 5 seconds, read batch of 10 messages from pgmq
+2. **Lock Messages:** Each message locked for 5 minutes (visibility timeout)
+3. **Idempotency Check:** Skip if already successfully processed
+4. **Suppression Check:** Skip if recipient is on suppression list
+5. **Send Email:** Call Brevo API via `IEmailService`
+6. **Log Attempt:** Record in `EmailDeliveryLog` with status
+7. **Archive or Retry:** Archive if success, increment retry count if failure
+8. **Dead Letter:** Move to DLQ if retry count ≥ 3
+
+**Key Methods:**
+```csharp
+protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+// Main loop - runs until app shutdown
+
+private async Task ProcessQueueBatchAsync(CancellationToken cancellationToken)
+// Read and process batch of messages
+
+private async Task<List<PgmqMessage>> ReadMessagesFromPgmq(Client supabaseClient, int batchSize)
+// Call read_email_queue RPC function
+
+private async Task ProcessMessageAsync(PgmqMessage message, Client supabaseClient, CancellationToken cancellationToken)
+// Process single message with idempotency, suppression, retry logic
+
+private async Task CheckOperationalAlertsAsync(Client supabaseClient, CancellationToken cancellationToken)
+// Monitor success rate and DLQ size, send alerts if degraded
+```
+
+**Metrics Tracking:**
+- Total processed
+- Total successful
+- Total failed
+- Total retries
+- Total dead lettered
+- Current queue depth
+- Success rate (calculated)
+
+---
+
+### 3. BrevoEmailService - Email Sending
+
+**Location:** `Services/BrevoEmailService.cs`
+
+**Implements:** `IEmailService`
+
+**Methods:**
+1. **`SendEmailAsync(to, subject, body, fromDisplayName)`**
+   - Basic email sending (text content)
+   - Used for simple notifications
+   
+2. **`SendTemplateEmailAsync(to, templateId, templateParams)`**
+   - Send using Brevo template ID
+   - Pass template variables as dictionary
+   
+3. **`SendTemplateEmailAsync(ITemplateContract contract)`**
+   - **Recommended approach** - Type-safe template contracts
+   - Validates contract before sending
+   - Resolves template ID from internal key
+   - Applies sender identity (override or default)
+
+**Brevo API Integration:**
+- Base URL: `https://api.brevo.com/v3/smtp/email`
+- Authentication: `api-key` header
+- Request format: JSON with `sender`, `to`, `templateId`, `params`
+- Response: HTTP 201 on success, error details on failure
+
+**Template Contract Flow:**
+```csharp
+// 1. Create contract
+var contract = new TeamReviewNotificationContract
+{
+    RecipientEmail = "user@example.com",
+    RecipientName = "John Doe",
+    ReviewerName = "Jane Analyst",
+    TeamName = "My Team",
+    LeagueName = "My League",
+    ReviewUrl = "https://app.com/review/123"
+};
+
+// 2. Send (validation happens automatically)
+await emailService.SendTemplateEmailAsync(contract);
+```
+
+---
+
+### 4. SupabaseService - Database Operations
+
+**Location:** `Services/SupabaseService.cs`
+
+**Implements:** `ISupabaseService`
+
+**Key Responsibilities:**
+- Query review records (TradeReview, TeamReview)
+- Fetch user emails via Admin Auth
+- Mark records as processed (email_sent, reviewer_notified, purchase_confirmed)
+- Provide DTOs with joined user email data
+
+**Pattern - Two-Step Fetch:**
+```csharp
+// 1. Query Supabase table for records
+var reviews = await _supabase
+    .From<TeamReview>()
+    .Where(review => review.EmailSent == false)
+    .Where(review => review.YoutubeLink != null)
+    .Select("id,user_id,youtube_link")
+    .Get();
+
+// 2. For each record, fetch user email via Admin Auth
+foreach (var review in reviews.Models)
+{
+    var user = await _adminAuth.GetUserById(review.UserId.ToString());
+    
+    if (!string.IsNullOrWhiteSpace(user?.Email))
+    {
+        result.Add(new TeamReviewEmailInfo
+        {
+            Id = review.Id,
+            Email = user.Email,
+            YoutubeLink = review.YoutubeLink
+        });
+    }
+}
+```
+
+**Admin Auth Requirement:**
+User emails are stored in Supabase Auth (not in public tables), so service role key + Admin Auth client are required for email lookups.
+
+---
+
+### 5. Template System
+
+**Location:** `Templates/` directory
+
+**Purpose:** Provide type-safe, validated email template contracts that map to Brevo templates
+
+#### Architecture Components
+
+**a) ITemplateContract** - Base interface
+```csharp
+public interface ITemplateContract
+{
+    string TemplateKey { get; }           // Internal key (e.g., "team-review-notification")
+    SenderIdentity? SenderOverride { get; init; }  // Optional sender override
+    
+    bool Validate(out List<string> errors);  // Validation logic
+    Dictionary<string, string> ToBrevoParams();  // Convert to Brevo parameters
+}
+```
+
+**b) Template Contracts** - Concrete implementations
+- `TeamReviewNotificationContract` - Notify customer of completed team review
+- `TradeOfferNotificationContract` - Notify customer of completed trade review
+- `PurchaseConfirmationContract` - Confirm purchase submission
+
+**c) TemplateService** - Resolution and validation
+```csharp
+public interface ITemplateService
+{
+    long ResolveTemplateId(string templateKey);  // Map key → Brevo ID
+    SenderIdentity GetSenderIdentity(ITemplateContract contract);  // Apply overrides
+    void ValidateContract(ITemplateContract contract);  // Validate before send
+}
+```
+
+**d) TemplateConfig** - Configuration
+```json
+"Templates": {
+    "TemplateIdMap": {
+        "team-review-notification": 1,
+        "trade-offer-notification": 2,
+        "purchase-confirmation": 3
     },
-    { watch: [user] }
-)
+    "DefaultSender": {
+        "Email": "noreply@boombustfantasy.com",
+        "Name": "Boom Bust Fantasy"
+    }
+}
 ```
 
-```typescript
-// ❌ BROKEN IN PRODUCTION — do NOT do this (the live-show-command.vue bug)
-const { data, pending } = await useLazyAsyncData('page', async () => {
-    const { data: userData } = await supabase.from('UserData').select('role')...
-    return { role: userData?.role }  // ← SSR serializes this as null, never re-fetches
-})
-const isReviewer = computed(() => data.value?.role === 'reviewer')  // always false
-```
+#### Benefits
 
-> **Why not `useAsyncData` (non-lazy)?** Even the non-lazy variant can serialize a null role when the session cookie isn't present during the SSR pass, then the client never re-runs the fetch. The `DEFAULT_REVIEWER_ID` synchronous check is the only approach that is guaranteed to be correct at every point in the Vue/Nuxt lifecycle.
-
-**Template pattern:**
-```vue
-<template>
-    <!-- 1. Not logged in -->
-    <LoginRequired v-if="!user" />
-
-    <!-- 2. Loading (use pending from page data fetch, not role fetch) -->
-    <div v-else-if="pending">
-        <USkeleton v-for="i in 3" :key="i" class="h-16 w-full" />
-    </div>
-
-    <!-- 3. Wrong role — only shown AFTER user is loaded -->
-    <UAlert v-else-if="!isReviewer" color="error" title="Access Denied" />
-
-    <!-- 4. Actual content -->
-    <div v-else>
-        <!-- page content -->
-    </div>
-</template>
-```
+1. **Type Safety:** Required fields enforced by C# type system
+2. **Validation:** Catch errors before API call (email format, required fields)
+3. **Maintainability:** Template changes don't require hunting for magic numbers
+4. **Testability:** Contracts can be unit tested independently
+5. **Documentation:** Contract properties self-document required variables
 
 ---
 
-### 3. Supabase FK constraints on dev branches
+### 6. Webhook Processing
 
-When creating a new Supabase branch via `mcp_supabase_create_branch`, FK constraints are NOT automatically carried over if they were added post-initial-migration. Joined queries that rely on named FK relationships (e.g. `LeagueInfo!Trades_league_id_fkey(...)`) will silently return `null` if the constraint doesn't exist on the branch.
+**Location:** `Controllers/BrevoWebhookController.cs`
 
-**If a joined query returns null on dev but works on prod:** check that FK constraints exist on the dev branch. Add them manually if needed.
+**Endpoint:** `POST /webhooks/brevo`
 
----
+**Flow:**
+1. **Validate Signature:** HMAC-SHA256 signature in `X-Brevo-Signature` header
+2. **Parse Event:** Deserialize `BrevoWebhookEvent` from request body
+3. **Update Delivery Log:** Map event type to status, update `EmailDeliveryLog`
+4. **Handle Suppression:** For unsubscribe/bounce/spam events, add to `EmailSuppression` table
 
-### 4. Realtime subscriptions: tables must be in the `supabase_realtime` publication
-
-A table will not fire realtime events unless it has been explicitly added to the publication:
-```sql
-ALTER PUBLICATION supabase_realtime ADD TABLE your_table_name;
+**Event Type Mapping:**
+```csharp
+"request" => "pending"
+"delivered" => "delivered"
+"soft_bounce" => "bounced"
+"hard_bounce" => "bounced"
+"opened" => "opened"
+"click" => "clicked"
+"spam" => "spam"
+"unsubscribe" => "unsubscribed"
 ```
 
-This must be done per-branch. If realtime isn't firing after a branch create, check this first.
+**Suppression Handling:**
+When a hard bounce, spam report, or unsubscribe occurs, the email is added to the `EmailSuppression` table. Future messages to that email are skipped by the queue consumer.
 
 ---
 
-### 5. Public server API routes: add anon RLS policies, don't use service role
+## 🗄️ Database Schema
 
-The app has no `SUPABASE_SERVICE_KEY` configured. `serverSupabaseServiceRole` will silently fail.
+### Core Tables
 
-For server API routes that serve **public pages** (no auth required, e.g. OBS overlays), the fix is to add anon SELECT policies on the tables they read — not to use the service role client.
+#### email_outbox
+**Purpose:** Queue of outbound email messages (pgmq table)
 
-```sql
--- Pattern for making a table readable by unauthenticated users
-CREATE POLICY "Anon can read ..." ON "TableName"
-    FOR SELECT TO anon USING (true);
+| Column | Type | Description |
+|--------|------|-------------|
+| id | GUID | Primary key |
+| idempotency_key | TEXT | Unique key for deduplication |
+| template_key | TEXT | Internal template identifier |
+| recipient_email | TEXT | Recipient email address |
+| template_variables | JSONB | Template parameters |
+| classification | TEXT | "transactional" or "marketing" |
+| schema_version | INT | Schema version for migrations |
+| published_at | TIMESTAMP | When message was enqueued |
+| created_at | TIMESTAMP | Record creation time |
+
+#### email_delivery_log
+**Purpose:** Log of delivery attempts (success, failure, retry)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | GUID | Primary key |
+| outbox_id | GUID | Reference to outbox message |
+| idempotency_key | TEXT | Matches outbox idempotency key |
+| attempt_number | INT | Retry attempt number (1, 2, 3) |
+| status | TEXT | "pending", "sent", "delivered", "bounced", etc. |
+| error_message | TEXT | Error details if failed |
+| external_id | TEXT | Brevo message ID |
+| attempted_at | TIMESTAMP | When attempt was made |
+
+#### email_suppression
+**Purpose:** Unsubscribe/bounce/spam suppression list
+
+| Column | Type | Description |
+|--------|------|-------------|
+| email | TEXT | Suppressed email address (PK) |
+| reason | TEXT | "hard_bounce", "spam", "unsubscribe" |
+| created_at | TIMESTAMP | When suppression was added |
+
+#### TradeReview
+**Purpose:** Trade review records from main app
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGINT | Primary key |
+| user_id | UUID | User who requested review |
+| reviewer_id | UUID | Assigned reviewer |
+| status | TEXT | "pending", "complete", etc. |
+| email_sent | BOOLEAN | Completion email sent flag |
+| reviewer_notified | BOOLEAN | Reviewer assigned notification flag |
+| purchase_confirmed | BOOLEAN | Purchase confirmation email sent |
+
+#### TeamReviews
+**Purpose:** Team review records from main app
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGINT | Primary key |
+| user_id | UUID | User who requested review |
+| reviewer_id | UUID | Assigned reviewer |
+| youtube_link | TEXT | Video link when completed |
+| email_sent | BOOLEAN | Completion email sent flag |
+| reviewer_notified | BOOLEAN | Reviewer assigned notification flag |
+| purchase_confirmed | BOOLEAN | Purchase confirmation email sent |
+
+### RPC Functions (Supabase)
+
+**`read_email_queue(p_batch_size INT, p_visibility_timeout_seconds INT)`**
+- Reads batch of messages from pgmq
+- Locks messages for visibility timeout duration
+- Returns array of `PgmqMessage` objects
+
+**`archive_email_message(p_msg_id BIGINT)`**
+- Removes message from queue (successfully processed)
+
+**`move_to_dead_letter(p_msg_id BIGINT)`**
+- Moves message to dead letter table
+- Called when max retries exceeded
+
+---
+
+## ⚙️ Configuration
+
+### appsettings.json Structure
+
+```json
+{
+    "App": {
+        "BaseUrl": "https://boombustfantasy.com",
+        "AdminApiKey": "secure-random-key-here"
+    },
+    "Brevo": {
+        "ApiKey": "your-brevo-api-key",
+        "FromEmail": "hello@boombustfantasy.com",
+        "FromName": "Boom Bust Fantasy",
+        "WebhookSecret": "your-webhook-secret"
+    },
+    "Templates": {
+        "TemplateIdMap": {
+            "team-review-notification": 1,
+            "trade-offer-notification": 2,
+            "purchase-confirmation": 3
+        },
+        "DefaultSender": {
+            "Email": "noreply@boombustfantasy.com",
+            "Name": "Boom Bust Fantasy"
+        }
+    },
+    "QueueReliability": {
+        "MaxRetryAttempts": 3,
+        "BaseBackoffMs": 1000,
+        "BackoffMultiplier": 2.0,
+        "MaxBackoffMs": 60000,
+        "OperationalAlertEmail": "ops@boombustfantasy.com",
+        "SuccessRateDegradationThreshold": 0.8,
+        "DeadLetterQueueSizeThreshold": 10
+    },
+    "Supabase": {
+        "Url": "https://your-project.supabase.co",
+        "ApiKey": "your-anon-key",
+        "ServiceRoleKey": "your-service-role-key"
+    }
+}
 ```
 
-Tables with anon read policies (added for the `/live-trade` OBS overlay):
-- `Trades` — "Anon can read trades"
-- `TradeDetails` — "Anon can read trade details"  
-- `UserData` — "Anon can read display names"
+### Configuration Classes
+
+All configuration sections are bound to strongly-typed classes in `Configs/`:
+
+- **AppConfig** - Application-level settings
+- **BrevoConfig** - Email provider configuration
+- **TemplateConfig** - Template ID mapping and default sender
+- **QueueReliabilityConfig** - Retry, backoff, and alerting thresholds
+- **SupabaseConfig** - Database connection settings
 
 ---
 
-### 6. Singleton tables: always seed the initial row
+## 🔄 Development Workflow
 
-Some tables (e.g. `stream_state`) are designed as a singleton — the app always reads/writes `WHERE id = 1`. An `UPDATE ... WHERE id = 1` on an empty table silently succeeds with 0 rows affected and no error. Always verify the row exists:
+### Running Locally
 
-```sql
--- Check
-SELECT * FROM stream_state WHERE id = 1;
+1. **Copy Configuration Template**
+   ```powershell
+   Copy-Item EmailService/appsettings.template.json EmailService/appsettings.json
+   ```
 
--- Seed if missing (id is GENERATED ALWAYS identity)
-INSERT INTO stream_state (id, active_trade_id, updated_at)
-OVERRIDING SYSTEM VALUE
-VALUES (1, null, now())
-ON CONFLICT (id) DO NOTHING;
+2. **Fill in Configuration Values**
+   - Add Brevo API key
+   - Add Supabase credentials (URL, service role key)
+   - Add admin API key (generate random secure string)
+
+3. **Run Application**
+   ```powershell
+   cd EmailService
+   dotnet run
+   ```
+
+4. **Verify Startup**
+   - Check logs: `logs/email-service-YYYYMMDD.txt`
+   - Hit status endpoint: `http://localhost:5000/`
+   - Check health: `http://localhost:5000/health`
+   - View metrics: `http://localhost:5000/metrics`
+
+### Testing Workflow
+
+**Run All Tests:**
+```powershell
+cd EmailService.Tests
+dotnet test
 ```
 
-If you create a new Supabase branch or restore a project and the feature "does nothing", check if the singleton row is missing.
+**Run Specific Test Class:**
+```powershell
+dotnet test --filter QueueProcessingBehaviorTests
+```
+
+**Run With Detailed Output:**
+```powershell
+dotnet test --logger "console;verbosity=detailed"
+```
+
+### Debugging Queue Processing
+
+1. **Check Queue Depth:**
+   ```
+   GET http://localhost:5000/metrics
+   ```
+   Look at `current_queue_depth`
+
+2. **View Success Rate:**
+   ```json
+   {
+     "queue_metrics": {
+       "total_processed": 45,
+       "total_successful": 43,
+       "total_failed": 2,
+       "success_rate": 0.9556
+     }
+   }
+   ```
+
+3. **Inspect Delivery Logs:**
+   Query Supabase `email_delivery_log` table for attempt history
+
+4. **Check Dead Letter Queue:**
+   Query `DeadLetterEmail` table for messages that exhausted retries
 
 ---
 
-### 7. YOU HAVE THE GITHUB MCP!
-This is your friend. Use it to run commands, execute code, search the web, and more — all without leaving the conversation. If you're not sure how to do something, ask the MCP for help or to perform the task for you.
+## 🧪 Testing Strategy
 
-## 🛠️ Standard Patterns
+### Behavioral Specifications
+**Location:** `EmailService.Tests/BehavioralSpecifications.cs`
 
-### Data fetching
-- Use `useLazyAsyncData` for all page-level data fetching (not `onMounted` + `ref`)
-- Use `useSupabaseClient` for direct DB access from components/pages
-- Use `$fetch` in composables for external APIs
-- Always handle `pending`, `error`, and empty states (three-state pattern)
+**Approach:** Test expected behaviors without complex mocking
 
-### Auth
-- Check `user.value` before any data fetch
-- Use `user.value.sub || user.value.id` for the UUID — always
-- For server API routes, use `serverSupabaseUser(event)` and check for null
+**Coverage:**
+- Exponential backoff calculations
+- Dead letter queue triggering logic
+- Idempotency key uniqueness
+- Webhook event mapping
 
-### TypeScript
-- `any` is forbidden — use `unknown` and narrow it
-- Define interfaces in `app/models/` for all data structures
+**Example:**
+```csharp
+[Theory]
+[InlineData(0, 1000)]   // First retry: 1 second
+[InlineData(1, 2000)]   // Second retry: 2 seconds
+[InlineData(2, 4000)]   // Third retry: 4 seconds
+public void ExponentialBackoff_CalculatesCorrectDelay(int retryCount, int expectedDelayMs)
+{
+    var baseBackoffMs = 1000;
+    var backoffMultiplier = 2.0;
+    
+    var calculatedDelay = (int)(baseBackoffMs * Math.Pow(backoffMultiplier, retryCount));
+    
+    calculatedDelay.Should().Be(expectedDelayMs);
+}
+```
 
-### UI
-- Use Nuxt UI primitives (`UCard`, `UButton`, `UBadge`, etc.) — never re-implement them with raw divs
-- Use `UCard variant="subtle"` for cards — this picks up the site's standard rounding (`rounded-lg`), border, and background automatically
-- Primary color: `indigo` | Neutral: `zinc` | defined in `app/app.config.ts`
+### Future Test Coverage (Planned)
+- Controller integration tests
+- Service unit tests with mocked dependencies
+- Template contract validation tests
+- End-to-end queue processing tests
+
+---
+
+## 🚨 Operational Monitoring
+
+### Metrics Endpoint
+**`GET /metrics`**
+
+Returns real-time queue processing statistics:
+```json
+{
+    "queue_metrics": {
+        "total_processed": 1250,
+        "total_successful": 1198,
+        "total_failed": 52,
+        "total_retries": 47,
+        "total_dead_lettered": 5,
+        "current_queue_depth": 12,
+        "success_rate": 0.9584
+    },
+    "timestamp": "2026-07-26T10:30:00Z"
+}
+```
+
+### Health Check Endpoint
+**`GET /health`**
+
+Returns service health status (used by orchestrators):
+```json
+{
+    "status": "Healthy",
+    "results": {
+        "queue_consumer": {
+            "status": "Healthy",
+            "description": "Queue consumer is running"
+        }
+    }
+}
+```
+
+### Operational Alerts
+
+The queue consumer monitors for degradation and sends alerts via email:
+
+**Alert Conditions:**
+1. **Success Rate Degradation**
+   - Triggers when success rate drops below threshold (default: 80%)
+   - Calculated over all processed messages since startup
+
+2. **Dead Letter Queue Size**
+   - Triggers when DLQ size exceeds threshold (default: 10 messages)
+   - Indicates systematic delivery failures
+
+**Alert Recipient:** Configured in `QueueReliability.OperationalAlertEmail`
+
+---
+
+## 📊 Key Architectural Patterns
+
+### 1. Idempotency Pattern
+**Problem:** Prevent duplicate email sends when messages are retried or processed by multiple consumers
+
+**Solution:**
+- Every message has a unique `idempotency_key`
+- Before sending, check `EmailDeliveryLog` for existing successful delivery with same key
+- If found, skip sending and archive message
+- If not found, proceed with send and log attempt
+
+### 2. Optimistic Locking Pattern
+**Problem:** Multiple consumers reading from the same queue could process the same message
+
+**Solution:**
+- pgmq provides visibility timeouts via `locked_until` timestamp
+- When message is read, it's invisible to other consumers for 5 minutes
+- If processing fails or times out, lock expires and message becomes visible again
+- Idempotency key prevents duplicate sends if message is reprocessed
+
+### 3. Template Contract Pattern
+**Problem:** Template IDs are magic numbers, required variables are undocumented, no validation until runtime
+
+**Solution:**
+- Create strongly-typed contracts for each template
+- Required properties enforced by C# type system (`required` keyword)
+- Validation logic in contract (email format, required fields)
+- Template key → ID mapping centralized in configuration
+- Sender identity can be overridden per-template
+
+### 4. Suppression List Pattern
+**Problem:** Continue sending to unsubscribed or hard-bounced emails wastes resources and damages sender reputation
+
+**Solution:**
+- Maintain `EmailSuppression` table with suppressed emails
+- Queue consumer checks suppression list before sending
+- Webhook processor adds to suppression list on bounce/spam/unsubscribe events
+- Suppressed messages are skipped and archived (not retried)
+
+### 5. Admin Auth Pattern
+**Problem:** User emails stored in Supabase Auth, not accessible via regular API
+
+**Solution:**
+- Use service role key to create Admin Auth client
+- Fetch user records by UUID via `GetUserById()`
+- Join email data with application tables in service layer
+- Return DTOs with combined data to consumers
+
+### 6. Background Service Pattern
+**Problem:** Need continuous queue processing without blocking HTTP requests
+
+**Solution:**
+- Implement `BackgroundService` (ASP.NET Core hosted service)
+- Override `ExecuteAsync()` with infinite loop + cancellation token
+- Use scoped service provider to create scopes for each batch
+- Resolve scoped services (Supabase, email service) per message
+- Handle exceptions and log errors without crashing service
+
+---
+
+## 🔐 Security Considerations
+
+### API Key Authentication
+- Admin endpoints protected by `AdminAuthAttribute` filter
+- Requires `X-Admin-Api-Key` header matching configured value
+- Never commit real API keys to source control
+
+### Webhook Signature Validation
+- Brevo webhooks validated via HMAC-SHA256 signature
+- Signature in `X-Brevo-Signature` header
+- Computed using webhook secret + request body
+- Prevents spoofed webhook events
+
+### Service Role Key Protection
+- Supabase service role key bypasses Row Level Security (RLS)
+- Required for Admin Auth user lookups
+- Must be kept secret and never exposed to client-side code
+- Store in secure configuration (environment variables, Azure Key Vault)
+
+### Email Suppression
+- Honors unsubscribe requests via webhook processing
+- Prevents sending to hard-bounced addresses
+- Maintains GDPR compliance for opt-outs
+
+---
+
+## 📚 Key Documentation
+
+- **Architecture Overview:** `docs/README.md`
+- **Queue Architecture (PRD):** `docs/PRD-18-queue-architecture.md`
+- **Implementation Checklist:** `docs/implementation-checklist.md`
+- **Retry & DLQ System:** `docs/retry-backoff-dlq.md`
+- **Template Contracts:** `docs/template-contracts.md`
+- **Dead Letter Replay API:** `docs/dead-letter-replay-api.md`
+- **Brevo Webhook Integration:** `docs/brevo-webhook-integration.md`
+
+---
+
+## 🎯 Developer Best Practices
+
+### When Adding New Email Templates
+
+1. **Create Brevo template** in Brevo UI
+2. **Note numeric template ID** assigned by Brevo
+3. **Create contract class** in `Templates/Contracts/`
+   - Implement `ITemplateContract`
+   - Add required properties with `required` keyword
+   - Implement `Validate()` with business rules
+   - Implement `ToBrevoParams()` to map properties
+
+4. **Add template key mapping** in `appsettings.json`
+   ```json
+   "Templates": {
+       "TemplateIdMap": {
+           "new-template-key": 999
+       }
+   }
+   ```
+
+5. **Update producer** (external system) to publish messages with new template key
+
+6. **Test end-to-end** with staging environment
+
+### When Adding New Database Queries
+
+1. **Define method signature** in `ISupabaseService`
+2. **Implement in SupabaseService**
+3. **Create DTO** if returning joined data
+4. **Test query** in Supabase SQL editor first
+5. **Add try-catch** with appropriate error logging
+
+### When Modifying Queue Processing Logic
+
+1. **Consider idempotency** - Will change break deduplication?
+2. **Consider multi-consumer safety** - Could race conditions occur?
+3. **Update metrics** if adding new counters
+4. **Update health check** if adding new failure modes
+5. **Test with high message volume** to ensure no performance regression
+
+### When Changing Retry/Backoff Behavior
+
+1. **Review operational impact** - More retries = higher load
+2. **Update configuration documentation**
+3. **Add behavioral test** for new logic
+4. **Verify DLQ threshold** still makes sense
+5. **Consider alert thresholds** may need adjustment
+
+---
+
+## 🚀 Future Enhancements (Planned)
+
+### Short Term
+- [ ] Purchase confirmation job (email on review submission)
+- [ ] Review completion job (email when review is ready)
+- [ ] Enhanced health checks (last processed timestamp, error rate)
+- [ ] Admin UI for DLQ management
+
+### Medium Term
+- [ ] Scheduled batch email support (marketing campaigns)
+- [ ] Email preview API (test templates before sending)
+- [ ] Delivery analytics dashboard
+- [ ] Template variable schema validation
+
+### Long Term
+- [ ] Multi-tenant support (multiple Brevo accounts)
+- [ ] Email rendering service (HTML generation)
+- [ ] A/B testing framework for email content
+- [ ] Rate limiting per recipient (prevent spamming)
+
+---
+
+## 📞 Support & Resources
+
+### Internal Resources
+- **Repository:** https://github.com/BoomBustFantasy/email_service
+- **Supabase Dashboard:** https://supabase.com/dashboard/project/[project-id]
+- **Brevo Dashboard:** https://app.brevo.com/
+
+### External Documentation
+- **ASP.NET Core:** https://docs.microsoft.com/en-us/aspnet/core/
+- **Supabase C# Client:** https://supabase.com/docs/reference/csharp/introduction
+- **Brevo API:** https://developers.brevo.com/reference/getting-started-1
+
+### Getting Help
+- Check logs in `EmailService/logs/` directory
+- Query `email_delivery_log` table for delivery attempt history
+- Review metrics endpoint for queue health
+- Check DLQ (`DeadLetterEmail` table) for stuck messages
+- Review webhook processing in Brevo dashboard
+
+---
+
+## ✅ Development Checklist
+
+When starting work on this codebase:
+
+- [ ] Clone repository and checkout branch
+- [ ] Copy `appsettings.template.json` to `appsettings.json`
+- [ ] Fill in Brevo API key and Supabase credentials
+- [ ] Run `dotnet restore` to install dependencies
+- [ ] Run `dotnet build` to verify compilation
+- [ ] Run `dotnet test` to verify tests pass
+- [ ] Run `dotnet run` and verify service starts
+- [ ] Check `/health` endpoint returns healthy
+- [ ] Check `/metrics` endpoint returns valid JSON
+- [ ] Review recent logs for any startup warnings
+- [ ] Read relevant documentation in `docs/` folder
+
+**You're now ready to develop! 🎉**

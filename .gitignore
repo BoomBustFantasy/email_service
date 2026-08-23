@@ -44,3 +44,11 @@ _ReSharper*/
 
 # Test results
 TestResults/
+
+# Claude Code worktrees — local scratch checkouts, never committed.
+# .claude/agents/ and CLAUDE.md are tracked deliberately.
+.claude/worktrees/
+
+# Runtime logs — Serilog writes these next to the binary; never commit them.
+EmailService/logs/
+*.txt.log
