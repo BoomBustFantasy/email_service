@@ -17,10 +17,9 @@ RUN --mount=type=secret,id=nuget_token \
         --username "BoomBustFantasy" \
         --password "$(cat /run/secrets/nuget_token)" \
         --store-password-in-clear-text \
-    && dotnet restore
+    && dotnet restore EmailService/EmailService.csproj
 
-WORKDIR /src/EmailService
-RUN dotnet publish -c Release -o /app
+RUN dotnet publish EmailService/EmailService.csproj -c Release -o /app --no-restore
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
