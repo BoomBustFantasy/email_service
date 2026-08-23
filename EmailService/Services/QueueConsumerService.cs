@@ -582,10 +582,23 @@ public class QueueConsumerService : BackgroundService
 /// </summary>
 public class PgmqMessage
 {
+    // read_email_queue returns snake_case columns. Without these attributes
+    // Newtonsoft silently leaves MsgId and ReadCount at 0 — which meant every
+    // archive call targeted message 0 and archived nothing, so no message was
+    // ever removed from the queue, and read_ct never reached the retry limit.
+    [JsonProperty("msg_id")]
     public long MsgId { get; set; }
+
+    [JsonProperty("read_ct")]
     public int ReadCount { get; set; }
+
+    [JsonProperty("enqueued_at")]
     public DateTime EnqueuedAt { get; set; }
+
+    [JsonProperty("vt")]
     public DateTime Vt { get; set; }
+
+    [JsonProperty("message")]
     public required object Message { get; set; }
 }
 
