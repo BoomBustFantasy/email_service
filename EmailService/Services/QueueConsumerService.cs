@@ -155,15 +155,19 @@ public class QueueConsumerService : BackgroundService
             if (IsStale(outboxRecord.CreatedAt, _reliabilityConfig.MaxMessageAgeHours, out var age))
             {
                 var staleReason =
-                    $"Message is {age.TotalHours:F1}h old, older than the " +
+                    DeliveryStatus.StaleReasonPrefix +
+                    $"message is {age.TotalHours:F1}h old, older than the " +
                     $"{_reliabilityConfig.MaxMessageAgeHours}h limit";
 
                 _logger.LogWarning(
                     "Dropping stale message {MsgId} for outbox {OutboxId}: {Reason}",
                     message.MsgId, outboxRecord.Id, staleReason);
 
+                // 'rejected', not 'stale' — the latter is not permitted by the
+                // column's CHECK constraint and the row would vanish silently.
                 await LogDeliveryAttempt(
-                    supabaseClient, outboxRecord, message.ReadCount + 1, "stale", staleReason);
+                    supabaseClient, outboxRecord, message.ReadCount + 1,
+                    DeliveryStatus.Rejected, staleReason);
                 await ArchiveMessageFromPgmq(supabaseClient, message.MsgId);
                 return;
             }
@@ -172,6 +176,8 @@ public class QueueConsumerService : BackgroundService
             var existingLog = await supabaseClient
                 .From<EmailDeliveryLog>()
                 .Where(x => x.IdempotencyKey == outboxRecord.IdempotencyKey)
+                // "delivered" is checked for completeness, but no row can currently
+                // hold it: the webhook writes it and the CHECK constraint forbids it.
                 .Where(x => x.Status == "sent" || x.Status == "delivered")
                 .Single();
 
@@ -207,6 +213,7 @@ public class QueueConsumerService : BackgroundService
             // Send email via Brevo
             bool sent = false;
             string? errorMessage = null;
+            string? externalId = null;
 
             try
             {
@@ -261,7 +268,9 @@ public class QueueConsumerService : BackgroundService
 
                 // Send the email through the contract path, which resolves the Brevo
                 // template ID and applies the sender identity for this template.
-                sent = await emailService.SendTemplateEmailAsync(contract);
+                var sendResult = await emailService.SendTemplateEmailAsync(contract);
+                sent = sendResult.Success;
+                externalId = sendResult.MessageId;
 
                 if (sent)
                 {
@@ -286,13 +295,16 @@ public class QueueConsumerService : BackgroundService
                     outboxRecord.Id, outboxRecord.RecipientEmail);
             }
 
-            // Log delivery attempt with actual status
+            // Log delivery attempt with actual status. externalId is Brevo's message
+            // ID: it is what BrevoWebhookController matches delivery webhooks against,
+            // so a sent row without it can never be reconciled or resolved.
             await LogDeliveryAttempt(
                 supabaseClient,
                 outboxRecord,
                 message.ReadCount + 1,
-                sent ? "sent" : "failed",
-                errorMessage);
+                sent ? DeliveryStatus.Sent : DeliveryStatus.Failed,
+                errorMessage,
+                externalId);
 
             if (sent)
             {
@@ -404,13 +416,18 @@ public class QueueConsumerService : BackgroundService
     /// Removes a message that can never succeed. A payload whose template key is
     /// unknown or whose required variables are missing is a producer defect —
     /// retrying it just burns the retry budget and delays real traffic, so it is
-    /// recorded as "invalid" in the delivery log and archived off the queue.
+    /// recorded as "rejected" (prefixed "Invalid: ") in the delivery log and archived
+    /// off the queue.
     /// </summary>
     private async Task RejectMessageAsync(
         Client supabaseClient, PgmqMessage message, EmailOutbox outboxRecord, string reason)
     {
+        // 'rejected', not 'invalid' — see DeliveryStatus. A malformed payload is
+        // still a permanent, deliberate non-send; the prefix keeps it separable
+        // from a staleness drop.
         await LogDeliveryAttempt(
-            supabaseClient, outboxRecord, message.ReadCount + 1, "invalid", reason);
+            supabaseClient, outboxRecord, message.ReadCount + 1,
+            DeliveryStatus.Rejected, DeliveryStatus.InvalidReasonPrefix + reason);
         await ArchiveMessageFromPgmq(supabaseClient, message.MsgId);
         _metrics.IncrementFailed();
     }
@@ -444,7 +461,8 @@ public class QueueConsumerService : BackgroundService
         EmailOutbox outbox,
         int attemptNumber,
         string status,
-        string? errorMessage)
+        string? errorMessage,
+        string? externalId = null)
     {
         try
         {
@@ -455,6 +473,7 @@ public class QueueConsumerService : BackgroundService
                 AttemptNumber = attemptNumber,
                 Status = status,
                 ErrorMessage = errorMessage,
+                ExternalId = externalId,
                 AttemptedAt = DateTime.UtcNow
             };
 

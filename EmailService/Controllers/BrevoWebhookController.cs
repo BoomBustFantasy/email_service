@@ -191,52 +191,76 @@ public class BrevoWebhookController : ControllerBase
             log.OutboxId);
     }
 
-    private async Task HandleSuppressionEventAsync(BrevoWebhookEvent webhookEvent)
-    {
-        var reason = webhookEvent.Event.ToLower() switch
+    /// <summary>
+    /// Maps a Brevo event to a permitted <c>email_suppression.reason</c>.
+    ///
+    /// Brevo's event names are not the database's vocabulary — the column admits
+    /// only the four values in <see cref="SuppressionReason"/>. Brevo's three
+    /// delivery-failure events all collapse to <c>bounce</c>; the address could
+    /// not be delivered to, and which flavour it was lives in Brevo, not here.
+    ///
+    /// Returns null for anything that should not suppress, so an unexpected event
+    /// is ignored rather than written as a value the constraint would reject.
+    /// </summary>
+    public static string? MapEventToSuppressionReason(string eventName) =>
+        eventName.ToLowerInvariant() switch
         {
-            "unsubscribed" => "unsubscribe",
-            "hard_bounce" => "hard_bounce",
-            "soft_bounce" => "soft_bounce",
-            "invalid_email" => "invalid",
-            "complaint" => "spam",
-            "blocked" => "blocked",
-            _ => "unknown"
+            "unsubscribed" => SuppressionReason.Unsubscribe,
+            "hard_bounce" => SuppressionReason.Bounce,
+            "soft_bounce" => SuppressionReason.Bounce,
+            "invalid_email" => SuppressionReason.Bounce,
+            "blocked" => SuppressionReason.Bounce,
+            "complaint" => SuppressionReason.Complaint,
+            _ => null
         };
 
-        // Check if suppression already exists
+    private async Task HandleSuppressionEventAsync(BrevoWebhookEvent webhookEvent)
+    {
+        var reason = MapEventToSuppressionReason(webhookEvent.Event);
+
+        if (reason is null)
+        {
+            _logger.LogWarning(
+                "No suppression reason mapped for event {Event} - not suppressing {Email}",
+                webhookEvent.Event, webhookEvent.Email);
+            return;
+        }
+
+        // Dedupe on email alone. email_suppression has UNIQUE(email), so an
+        // address suppressed for one reason cannot be inserted again under
+        // another — matching on email+reason passed this check and then violated
+        // the index, which is why a bounce after an unsubscribe used to 500.
         var existing = await _supabaseClient
             .From<EmailSuppression>()
             .Where(x => x.Email == webhookEvent.Email)
-            .Where(x => x.Reason == reason)
             .Get();
 
-        if (existing.Models.Count == 0)
-        {
-            // Add new suppression
-            var suppression = new EmailSuppression
-            {
-                Email = webhookEvent.Email,
-                Reason = reason,
-                SuppressionType = "all",
-                CreatedAt = DateTime.UtcNow
-            };
-
-            await _supabaseClient
-                .From<EmailSuppression>()
-                .Insert(suppression);
-
-            _logger.LogWarning(
-                "Added email suppression: email={Email}, reason={Reason}",
-                webhookEvent.Email,
-                reason);
-        }
-        else
+        if (existing.Models.Count > 0)
         {
             _logger.LogDebug(
-                "Suppression already exists: email={Email}, reason={Reason}",
+                "Suppression already exists: email={Email}, existing reason={ExistingReason}, event={Event}",
                 webhookEvent.Email,
-                reason);
+                existing.Models.First().Reason,
+                webhookEvent.Event);
+            return;
         }
+
+        var suppression = new EmailSuppression
+        {
+            Email = webhookEvent.Email,
+            Reason = reason,
+            SuppressionType = SuppressionType.All,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _supabaseClient
+            .From<EmailSuppression>()
+            .Insert(suppression);
+
+        _logger.LogWarning(
+            "Added email suppression: email={Email}, reason={Reason}, event={Event}",
+            webhookEvent.Email,
+            reason,
+            webhookEvent.Event);
     }
 }

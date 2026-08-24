@@ -17,9 +17,14 @@ namespace EmailService.Services
         Task<bool> SendTemplateEmailAsync(string to, long templateId, Dictionary<string, string>? templateParams = null);
 
         /// <summary>
-        /// Send an email using a template contract with validation and automatic ID resolution
+        /// Send an email using a template contract with validation and automatic ID resolution.
         /// </summary>
         /// <param name="contract">Validated template contract</param>
-        Task<bool> SendTemplateEmailAsync(ITemplateContract contract);
+        /// <returns>
+        /// Success plus Brevo's message ID. The ID is persisted as
+        /// <c>EmailDeliveryLog.ExternalId</c>, which is what delivery webhooks are
+        /// matched against — a send recorded without it can never be reconciled.
+        /// </returns>
+        Task<SendResult> SendTemplateEmailAsync(ITemplateContract contract);
     }
 }

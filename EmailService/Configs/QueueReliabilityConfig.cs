@@ -45,6 +45,12 @@ public class QueueReliabilityConfig
     /// leaves a backlog of notifications that are no longer useful — in August
     /// 2026 the queue held trade-review-complete mail up to 18 days stale — and
     /// delivering them late is worse than not delivering them.
+    ///
+    /// Lowered from 48 to 2 on 2026-08-24: there is no appetite for late mail at
+    /// all, and the templates are time-anchored (trade_submitted carries a
+    /// next_show_label that is wrong within hours). The trade-off is that any
+    /// consumer outage longer than two hours discards real notifications rather
+    /// than delivering them behind schedule — that is the intended behaviour.
     /// </summary>
-    public int MaxMessageAgeHours { get; set; } = 48;
+    public int MaxMessageAgeHours { get; set; } = 2;
 }

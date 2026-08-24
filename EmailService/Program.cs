@@ -10,8 +10,18 @@ using EmailService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configuration
+// Configuration.
+//
+// appsettings.Defaults.json carries the non-secret settings and ships inside the
+// image. appsettings.json is gitignored because it holds credentials, so it is
+// not in the Docker build context — anything defined only there binds to nothing
+// in production. That is how TemplateIdMap arrived empty in prod and every
+// template failed the startup validator at once.
+//
+// Order is precedence: defaults, then local appsettings.json, then environment
+// variables (how the container supplies secrets).
 builder.Configuration
+    .AddJsonFile("appsettings.Defaults.json", optional: false, reloadOnChange: false)
     .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
     .AddEnvironmentVariables();
 

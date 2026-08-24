@@ -107,7 +107,7 @@ public class BrevoEmailService : IEmailService
         }
     }
 
-    public async Task<bool> SendTemplateEmailAsync(ITemplateContract contract)
+    public async Task<SendResult> SendTemplateEmailAsync(ITemplateContract contract)
     {
         try
         {
@@ -151,18 +151,83 @@ public class BrevoEmailService : IEmailService
 
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("Successfully sent template email to {Email}", recipientEmail);
-                return true;
+                var messageId = ReadMessageId(await response.Content.ReadAsStringAsync());
+
+                if (messageId is null)
+                {
+                    // Brevo accepted the send, so this is not a failure — but the row
+                    // will be unreconcilable and its delivery webhook will never match.
+                    _logger.LogWarning(
+                        "Brevo accepted the send to {Email} but returned no messageId; " +
+                        "external_id will be null and delivery webhooks cannot be matched",
+                        recipientEmail);
+                }
+
+                _logger.LogInformation(
+                    "Successfully sent template email to {Email} (messageId {MessageId})",
+                    recipientEmail, messageId ?? "<none>");
+
+                return SendResult.Sent(messageId);
             }
 
             var error = await response.Content.ReadAsStringAsync();
             _logger.LogError("Brevo contract template API error {StatusCode}: {Error}", (int)response.StatusCode, error);
-            return false;
+            return SendResult.Failed();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send contract template email for {TemplateKey}", contract.TemplateKey);
-            return false;
+            return SendResult.Failed();
+        }
+    }
+
+    /// <summary>
+    /// Pulls the message ID out of Brevo's send response. A single-recipient send
+    /// returns <c>{"messageId":"..."}</c>; the batch form returns
+    /// <c>{"messageIds":["..."]}</c>. Never throws — a body we cannot parse costs
+    /// reconciliation, not the send, which Brevo has already accepted.
+    /// </summary>
+    public static string? ReadMessageId(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            var root = document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (root.TryGetProperty("messageId", out var single) &&
+                single.ValueKind == JsonValueKind.String)
+            {
+                var value = single.GetString();
+                return string.IsNullOrWhiteSpace(value) ? null : value;
+            }
+
+            if (root.TryGetProperty("messageIds", out var many) &&
+                many.ValueKind == JsonValueKind.Array &&
+                many.GetArrayLength() > 0)
+            {
+                var first = many[0];
+                if (first.ValueKind == JsonValueKind.String)
+                {
+                    var value = first.GetString();
+                    return string.IsNullOrWhiteSpace(value) ? null : value;
+                }
+            }
+
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 }
