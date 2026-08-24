@@ -39,8 +39,18 @@ public class TemplateContractRegistry : ITemplateContractRegistry
 
             // ReviewerTradeAssignedContract is intentionally absent. The key exists
             // in boom's EmailTemplateKey union but has no call site and has never
-            // produced a message, so there is no Brevo template to map it to. If
-            // the producer ever wires it, register it here and add its ID to
+            // produced a message (re-confirmed against the producer 2026-08-24:
+            // zero call sites in server/ or app/, zero email_outbox rows ever), so
+            // there is no Brevo template to map it to.
+            //
+            // The trap: boom still exports it in EmailTemplateKey with a full typed
+            // variable contract (trade_id, trade_url), and its emailProducers.test.ts
+            // asserts both that contract and a 'trade-assigned-{id}' idempotency key.
+            // A developer wiring it up therefore gets green types and a green test
+            // suite on the producer side while every message is rejected as invalid
+            // and archived here, with nothing failing anywhere to say so.
+            //
+            // If the producer ever wires it, register it here and add its ID to
             // TemplateIdMap — the startup validator enforces that both are done.
 
             // Added to the producer after PRD #17 closed. Not in that ticket's

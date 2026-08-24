@@ -21,7 +21,14 @@ public class WelcomeEmailContract : ITemplateContract
 
     // Required template variables
     public required string RecipientEmail { get; init; }
-    public required string RecipientName { get; init; }
+
+    // Optional. The producer sends welcome_email with an empty variable object —
+    // a 2026-07-31 refactor in boom dropped the name and never restored it. This
+    // was required until 2026-08-24, which silently rejected every welcome email
+    // as invalid and archived it off the queue. Personalizing again means changing
+    // the producer first; until then Brevo template 6 must not depend on
+    // {{params.recipient_name}}.
+    public string? RecipientName { get; init; }
 
     // Optional - link to get started or profile page
     public string? GetStartedUrl { get; init; }
@@ -33,9 +40,6 @@ public class WelcomeEmailContract : ITemplateContract
         if (string.IsNullOrWhiteSpace(RecipientEmail))
             errors.Add("RecipientEmail is required");
 
-        if (string.IsNullOrWhiteSpace(RecipientName))
-            errors.Add("RecipientName is required");
-
         // Validate email format
         if (!string.IsNullOrWhiteSpace(RecipientEmail) && !IsValidEmail(RecipientEmail))
             errors.Add($"RecipientEmail '{RecipientEmail}' is not a valid email address");
@@ -45,10 +49,12 @@ public class WelcomeEmailContract : ITemplateContract
 
     public Dictionary<string, string> ToBrevoParams()
     {
-        var parameters = new Dictionary<string, string>
+        var parameters = new Dictionary<string, string>();
+
+        if (!string.IsNullOrWhiteSpace(RecipientName))
         {
-            ["recipient_name"] = RecipientName
-        };
+            parameters["recipient_name"] = RecipientName;
+        }
 
         if (!string.IsNullOrWhiteSpace(GetStartedUrl))
         {

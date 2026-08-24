@@ -23,6 +23,13 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Non-secret config the service cannot boot without. It is loaded with
+         optional: false, so it must reach both the run output and the published
+         image, not just the build directory. -->
+    <Content Update="appsettings.Defaults.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

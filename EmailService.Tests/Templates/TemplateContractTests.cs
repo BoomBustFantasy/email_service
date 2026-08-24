@@ -226,4 +226,53 @@ public class TemplateContractTests
             .Validate(out var errors).Should().BeFalse();
         errors.Should().Contain(e => e.Contains(missing));
     }
+
+    // --- welcome_email --------------------------------------------------------
+    //
+    // The producer enqueues welcome_email with an empty variable object; its type
+    // in boom is literally Record<string, never>. RecipientName was required until
+    // 2026-08-24, so every welcome email failed Validate(), was archived as
+    // 'invalid', and was never retried — silent permanent loss, untested on both
+    // sides. These pin the empty payload as the supported shape.
+
+    [Fact]
+    public void WelcomeEmail_WithNoVariablesAtAll_IsValid()
+    {
+        var contract = WelcomeEmailContract.Create(Recipient, Vars());
+
+        contract.Validate(out var errors).Should().BeTrue();
+        errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void WelcomeEmail_WithNoVariables_SendsNoBrevoParams()
+    {
+        // Brevo template 6 must not depend on {{params.recipient_name}} — there is
+        // nothing to render it with until the producer starts sending a name.
+        WelcomeEmailContract.Create(Recipient, Vars())
+            .ToBrevoParams().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void WelcomeEmail_StillForwardsOptionalVariablesWhenPresent()
+    {
+        var contract = WelcomeEmailContract.Create(Recipient, Vars(
+            ("recipient_name", "Jack"),
+            ("get_started_url", "https://boombustfantasy.com/start")));
+
+        contract.Validate(out _).Should().BeTrue();
+        contract.ToBrevoParams().Should().BeEquivalentTo(new Dictionary<string, string>
+        {
+            ["recipient_name"] = "Jack",
+            ["get_started_url"] = "https://boombustfantasy.com/start"
+        });
+    }
+
+    [Fact]
+    public void WelcomeEmail_StillRejectsAMalformedRecipient()
+    {
+        WelcomeEmailContract.Create("not-an-email", Vars())
+            .Validate(out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("not a valid email address"));
+    }
 }

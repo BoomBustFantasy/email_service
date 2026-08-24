@@ -34,6 +34,8 @@ dotnet nuget add source https://nuget.pkg.github.com/BoomBustFantasy/index.json 
 
 `nuget.config` and `appsettings.json` are both gitignored and hold credentials. Copy `EmailService/appsettings.template.json` to `appsettings.json` to start. Every key also works as an environment variable (`Brevo__ApiKey`, `Supabase__ServiceRoleKey`) — that's how the container is configured.
 
+**Non-secret settings go in `EmailService/appsettings.Defaults.json`, which is committed and is the only settings file that reaches production.** Because `appsettings.json` is gitignored it is absent from the Docker build context, so anything defined only there binds to nothing in the container. Config precedence is `appsettings.Defaults.json` → `appsettings.json` (local only) → environment variables.
+
 Note the test project targets **net10.0** while the service targets **net9.0**.
 
 ## Architecture
@@ -57,7 +59,7 @@ Four places, all required:
 
 1. A contract class in `Templates/Contracts/` with a `public const string Key`, a static `Create(recipientEmail, variables)` factory, `Validate`, and `ToBrevoParams`. The four review templates share `ReviewLinkContract`.
 2. An entry in `TemplateContractRegistry.Factories`.
-3. An entry in `TemplateIdMap` in config, mapping the key to the Brevo numeric template ID.
+3. An entry in `TemplateIdMap` in `EmailService/appsettings.Defaults.json`, mapping the key to the Brevo numeric template ID. Not `appsettings.json` — that never ships.
 4. The Brevo template itself, whose `{{params.x}}` names must match `ToBrevoParams()` keys.
 
 Keys are **producer-facing**. `boom` sends `template_key`; changing one is a breaking change across both repos. A key present in `TemplateIdMap` but absent from the registry is rejected as invalid — the map alone does not make a template work.
@@ -68,6 +70,8 @@ Keys are **producer-facing**. `boom` sends `template_key`; changing one is a bre
 - **The webhook body is read twice.** Model binding consumes it, then the HMAC check rewinds. `Program.cs` calls `EnableBuffering()` for `/webhooks` requests to make that legal — without it the rewind throws on a non-seekable stream.
 - **`ReviewEmailFactory` is dead code** carried over from the pre-queue design, still registered in DI with no callers.
 - **Three contracts are orphaned**: `TeamReviewNotificationContract`, `TradeOfferNotificationContract`, `PurchaseConfirmationContract`. They are not in the PRD's template scope, not in the registry, and not in `TemplateIdMap` — unreachable. Delete or wire them; don't assume they're live.
+- **`email_delivery_log.status` is CHECK-constrained** to `pending`, `sent`, `failed`, `bounced`, `rejected`, `deferred` (`valid_status`, defined in boom's `20260725165628_email_foundation.sql`). Use `DeliveryStatus`, never a literal. Anything outside the set fails the insert, and `LogDeliveryAttempt` swallows the exception, so the row is lost while the queue message is archived anyway — silently. The consumer wrote `stale` and `invalid` until 2026-08-24 and neither was ever recorded; both are now `rejected`, separated by the `Stale: ` / `Invalid: ` reason prefix. **Still broken:** `BrevoWebhookController.MapEventToStatus` returns `delivered`, `opened`, `clicked`, `unsubscribed`, `spam`, `blocked` — none permitted. That needs the constraint widened, not remapping. Knock-on: the idempotency check treats `delivered` as already-processed, but no row can hold it, so only `sent` does any work.
+- **A successful send must persist Brevo's message ID.** `SendTemplateEmailAsync(ITemplateContract)` returns a `SendResult`, and the consumer writes `MessageId` to `EmailDeliveryLog.ExternalId`. `BrevoWebhookController` matches delivery webhooks by that column, so a `sent` row without it is unreconcilable and its webhook can never find it. Every `sent` row written before 2026-08-24 has a null `external_id` for this reason.
 - **pgmq does not dead-letter on its own**, despite a comment claiming it does. Failed sends simply redeliver when the visibility timeout lapses. Explicit removal only happens via `ArchiveMessageFromPgmq`.
 - Jobs and the consumer swallow exceptions and log; a failure never stops the host.
 

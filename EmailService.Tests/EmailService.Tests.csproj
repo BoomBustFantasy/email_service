@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -23,6 +23,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EmailService\EmailService.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ShippedConfiguration_IsFullyWired asserts against the real file rather
+         than a copy of its contents, so the file has to be next to the tests. -->
+    <Content Include="..\EmailService\appsettings.Defaults.json" Link="appsettings.Defaults.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

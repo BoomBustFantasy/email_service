@@ -25,7 +25,9 @@ Ordered by queued volume, so the highest-traffic templates get built first.
 | Season pass confirmed | `membership_season_pass_confirmed` | **11** | `tier`, `expires_at`, `checkin_credits_included` | 0 | Season pass purchased |
 | Reviewer: trade assigned | `reviewer_trade_assigned` | _not needed_ | `trade_id`, `trade_url` | 0 | **Never — see below** |
 
-Fill in each ID after creating the template in Brevo, then mirror them into `TemplateIdMap` in `appsettings.json`.
+Fill in each ID after creating the template in Brevo, then mirror them into `TemplateIdMap` in `EmailService/appsettings.Defaults.json`.
+
+**Not `appsettings.json`.** That file is gitignored, so it is not in the Docker build context and never reaches production — a map kept only there binds to an empty dictionary in the container and the service refuses to start. `appsettings.Defaults.json` is committed and ships in the image.
 
 Value notes for template design:
 
@@ -33,6 +35,7 @@ Value notes for template design:
 - `product_type` is `"team_review"` or `"trade_credit"`; `credits_amount` is a number.
 - `tier` is `"Pro"` or `"MVP"`.
 - `welcome_email` receives `{}` — no variables at all, so it cannot personalize. Adding a name means changing the producer first.
+  `WelcomeEmailContract` accepts the empty payload as of 2026-08-24; `recipient_name` is optional and forwarded only when present, so **Brevo template 6 must not depend on `{{ params.recipient_name }}`**. It was required until then, which failed `Validate()` on every welcome email and archived it as `invalid` — no retry, no dead-letter, silent permanent loss. If the producer restores a name, the variable is `recipient_name`, not `user_name`; producer and template have to change together.
 
 ## Sample payloads
 
@@ -73,6 +76,6 @@ Four places, all required — a Brevo ID without a contract gets rejected as inv
 1. Create the template in Brevo; note its numeric ID.
 2. Add a contract class in `EmailService/Templates/Contracts/` with a `public const string Key`, a static `Create(recipientEmail, variables)` factory, `Validate`, and `ToBrevoParams`. The review templates share `ReviewLinkContract`.
 3. Register it in `TemplateContractRegistry.Factories`.
-4. Map key → Brevo ID in `TemplateIdMap` (`appsettings.json`, and the template file).
+4. Map key → Brevo ID in `TemplateIdMap` in `EmailService/appsettings.Defaults.json` — the committed file that ships in the image, not `appsettings.json`.
 
 Template keys are the producer-facing contract. Renaming one is a breaking change across both repos — the producer sends the key, this service resolves it.

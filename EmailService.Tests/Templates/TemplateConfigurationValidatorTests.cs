@@ -1,5 +1,6 @@
 using EmailService.Templates;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace EmailService.Tests.Templates;
@@ -103,6 +104,32 @@ public class TemplateConfigurationValidatorTests
             ("membership_season_pass_confirmed", 11));
 
         var act = () => TemplateConfigurationValidator.Validate(new TemplateContractRegistry(), shipped);
+
+        act.Should().NotThrow();
+    }
+
+    /// <summary>
+    /// The template ID map has to be inside the container image to have any
+    /// effect. It used to live only in appsettings.json, which is gitignored and
+    /// therefore absent from the Docker build context, so production booted with
+    /// an empty map and every registered key failed the validator at once. This
+    /// test binds the file that actually ships, so a key added to the registry
+    /// without an ID in appsettings.Defaults.json fails the build rather than
+    /// the deploy.
+    /// </summary>
+    [Fact]
+    public void ShippedDefaultsFile_CoversEveryRegisteredContract()
+    {
+        var shipped = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.Defaults.json", optional: false)
+            .Build()
+            .GetSection("Templates")
+            .Get<TemplateConfig>();
+
+        shipped.Should().NotBeNull("appsettings.Defaults.json must contain a Templates section");
+
+        var act = () => TemplateConfigurationValidator.Validate(new TemplateContractRegistry(), shipped!);
 
         act.Should().NotThrow();
     }
