@@ -78,12 +78,7 @@ public class BrevoEmailService : IEmailService
             client.DefaultRequestHeaders.Add("api-key", _config.ApiKey);
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-            var payload = new Dictionary<string, object>
-            {
-                ["to"] = new[] { new { email = to } },
-                ["templateId"] = templateId,
-                ["params"] = templateParams ?? new Dictionary<string, string>()
-            };
+            var payload = BuildTemplatePayload(sender: null, to, templateId, templateParams);
 
             var json = JsonSerializer.Serialize(payload);
             _logger.LogDebug("Brevo template request payload: {Json}", json);
@@ -135,13 +130,11 @@ public class BrevoEmailService : IEmailService
             client.DefaultRequestHeaders.Add("api-key", _config.ApiKey);
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-            var payload = new Dictionary<string, object>
-            {
-                ["sender"] = new { name = sender.Name, email = sender.Email },
-                ["to"] = new[] { new { email = recipientEmail } },
-                ["templateId"] = templateId,
-                ["params"] = templateParams
-            };
+            var payload = BuildTemplatePayload(
+                new { name = sender.Name, email = sender.Email },
+                recipientEmail,
+                templateId,
+                templateParams);
 
             var json = JsonSerializer.Serialize(payload);
             _logger.LogDebug("Brevo contract template request: {Json}", json);
@@ -179,6 +172,38 @@ public class BrevoEmailService : IEmailService
             _logger.LogError(ex, "Failed to send contract template email for {TemplateKey}", contract.TemplateKey);
             return SendResult.Failed();
         }
+    }
+
+    /// <summary>
+    /// Builds the body for POST /v3/smtp/email. <c>params</c> is included only when
+    /// there is something to substitute: Brevo answers 400 to an empty params
+    /// object, and the consumer then fails the message, retries it three times,
+    /// and dead-letters it. welcome_email is the only template whose contract can
+    /// legitimately produce no params (the producer sends <c>{}</c>), which is why
+    /// every welcome email ever attempted failed while every other template sent.
+    /// </summary>
+    public static Dictionary<string, object> BuildTemplatePayload(
+        object? sender,
+        string recipientEmail,
+        long templateId,
+        IReadOnlyDictionary<string, string>? templateParams)
+    {
+        var payload = new Dictionary<string, object>();
+
+        if (sender is not null)
+        {
+            payload["sender"] = sender;
+        }
+
+        payload["to"] = new[] { new { email = recipientEmail } };
+        payload["templateId"] = templateId;
+
+        if (templateParams is { Count: > 0 })
+        {
+            payload["params"] = templateParams;
+        }
+
+        return payload;
     }
 
     /// <summary>
