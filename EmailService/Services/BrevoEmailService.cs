@@ -175,13 +175,23 @@ public class BrevoEmailService : IEmailService
     }
 
     /// <summary>
-    /// Builds the body for POST /v3/smtp/email. <c>params</c> is included only when
-    /// there is something to substitute: Brevo answers 400 to an empty params
-    /// object, and the consumer then fails the message, retries it three times,
-    /// and dead-letters it. welcome_email is the only template whose contract can
-    /// legitimately produce no params (the producer sends <c>{}</c>), which is why
-    /// every welcome email ever attempted failed while every other template sent.
+    /// Builds the body for POST /v3/smtp/email. Brevo rejects a template send
+    /// whose <c>params</c> is empty OR absent with
+    /// <c>400 {"code":"missing_parameter","message":"params is blank"}</c>
+    /// (confirmed in production logs 2026-09-16). The consumer then fails the
+    /// message, retries it three times, and dead-letters it. welcome_email is the
+    /// only template whose contract legitimately produces no params (the producer
+    /// sends <c>{}</c>), which is why every welcome email ever attempted failed
+    /// while every other template sent. When the contract has nothing to
+    /// substitute, <c>recipient_email</c> is sent so params is never blank.
     /// </summary>
+    /// <summary>
+    /// The one key sent when a contract has no params of its own. Brevo refuses a
+    /// blank params object, so something must be there; the recipient address is
+    /// harmless and usable from the template as <c>{{ params.recipient_email }}</c>.
+    /// </summary>
+    public const string FallbackParamKey = "recipient_email";
+
     public static Dictionary<string, object> BuildTemplatePayload(
         object? sender,
         string recipientEmail,
@@ -198,10 +208,9 @@ public class BrevoEmailService : IEmailService
         payload["to"] = new[] { new { email = recipientEmail } };
         payload["templateId"] = templateId;
 
-        if (templateParams is { Count: > 0 })
-        {
-            payload["params"] = templateParams;
-        }
+        payload["params"] = templateParams is { Count: > 0 }
+            ? templateParams
+            : new Dictionary<string, string> { [FallbackParamKey] = recipientEmail };
 
         return payload;
     }

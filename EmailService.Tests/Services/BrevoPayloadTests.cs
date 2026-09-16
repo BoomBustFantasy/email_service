@@ -7,13 +7,15 @@ using Xunit;
 namespace EmailService.Tests.Services;
 
 /// <summary>
-/// Brevo rejects a send whose <c>params</c> is an empty object with HTTP 400.
-/// The consumer reports that as "Email service returned false", retries the
-/// identical body three times, and dead-letters the message. welcome_email is
-/// the only template whose contract produces no params (the producer sends
-/// <c>{}</c> by design), so every welcome email ever attempted failed this way
-/// while every other template sent normally. The field must be omitted, not
-/// sent empty.
+/// Brevo rejects a template send whose <c>params</c> is empty or absent with
+/// 400 {"code":"missing_parameter","message":"params is blank"} (production
+/// logs, 2026-09-16). The consumer reports that as "Email service returned
+/// false", retries the identical body three times, and dead-letters the
+/// message. welcome_email is the only template whose contract produces no
+/// params (the producer sends <c>{}</c> by design), so every welcome email ever
+/// attempted failed this way while every other template sent normally. Omitting
+/// the field (the first attempted fix) fails identically: params must always
+/// carry at least one key.
 /// </summary>
 public class BrevoPayloadTests
 {
@@ -24,22 +26,34 @@ public class BrevoPayloadTests
         JsonDocument.Parse(JsonSerializer.Serialize(payload)).RootElement;
 
     [Fact]
-    public void EmptyParams_OmitsTheParamsField()
+    public void EmptyParams_SendsTheRecipientAsTheOnlyParam()
     {
         var json = Serialize(BrevoEmailService.BuildTemplatePayload(
             Sender, Recipient, 6, new Dictionary<string, string>()));
 
-        json.TryGetProperty("params", out _).Should().BeFalse(
-            "Brevo answers 400 to an empty params object");
+        var parameters = json.GetProperty("params");
+        parameters.EnumerateObject().Should().HaveCount(1, "Brevo answers 400 to a blank params object");
+        parameters.GetProperty(BrevoEmailService.FallbackParamKey).GetString().Should().Be(Recipient);
     }
 
     [Fact]
-    public void NullParams_OmitsTheParamsField()
+    public void NullParams_SendsTheRecipientAsTheOnlyParam()
     {
         var json = Serialize(BrevoEmailService.BuildTemplatePayload(
             Sender, Recipient, 6, null));
 
-        json.TryGetProperty("params", out _).Should().BeFalse();
+        var parameters = json.GetProperty("params");
+        parameters.EnumerateObject().Should().HaveCount(1, "Brevo answers 400 to an absent params object too");
+        parameters.GetProperty(BrevoEmailService.FallbackParamKey).GetString().Should().Be(Recipient);
+    }
+
+    [Fact]
+    public void PopulatedParams_DoNotGetTheFallbackAdded()
+    {
+        var json = Serialize(BrevoEmailService.BuildTemplatePayload(
+            Sender, Recipient, 7, new Dictionary<string, string> { ["trade_id"] = "42" }));
+
+        json.GetProperty("params").TryGetProperty(BrevoEmailService.FallbackParamKey, out _).Should().BeFalse();
     }
 
     [Fact]
